@@ -1,12 +1,8 @@
+use crate::domain::store::store::Store;
 use sqlx::PgPool;
-use crate::domain::store::Store;
 
-pub async fn get_store_by_domain(
-    pool: &PgPool,
-    domain: &str,
-) -> Result<Store, sqlx::Error> {
-    sqlx::query_as!(
-        Store,
+pub async fn get_store_by_domain(pool: &PgPool, domain: &str) -> Result<Store, sqlx::Error> {
+    sqlx::query_as(
         r#"
         SELECT
             id,
@@ -14,12 +10,12 @@ pub async fn get_store_by_domain(
             domain,
             currency,
             timezone,
-            created_at
+            created_at::timestamptz AS created_at
         FROM stores
         WHERE domain = $1
         "#,
-        domain
     )
+    .bind(domain)
     .fetch_one(pool)
     .await
 }
