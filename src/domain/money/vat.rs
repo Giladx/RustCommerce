@@ -15,7 +15,9 @@ impl VatRate {
     }
 
     pub fn zero() -> Self {
-        Self { rate: Decimal::ZERO }
+        Self {
+            rate: Decimal::ZERO,
+        }
     }
 
     pub fn rate(&self) -> Decimal {
@@ -31,10 +33,7 @@ pub struct VatBreakdown {
 }
 
 pub fn from_net(net: &Money, vat_rate: VatRate) -> VatBreakdown {
-    let vat_amount = round(
-        net.amount() * vat_rate.rate(),
-        net.currency().minor_units(),
-    );
+    let vat_amount = round(net.amount() * vat_rate.rate(), net.currency().minor_units());
 
     let vat = Money::new(vat_amount, net.currency());
     let gross = net.add(&vat).unwrap();
@@ -56,10 +55,7 @@ pub fn from_gross(gross: &Money, vat_rate: VatRate) -> VatBreakdown {
     }
 
     let divisor = dec!(1) + vat_rate.rate();
-    let net_amount = round(
-        gross.amount() / divisor,
-        gross.currency().minor_units(),
-    );
+    let net_amount = round(gross.amount() / divisor, gross.currency().minor_units());
 
     let net = Money::new(net_amount, gross.currency());
     let vat = gross.subtract(&net).unwrap();

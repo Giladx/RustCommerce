@@ -3,10 +3,7 @@ use crate::domain::discount::rule::DiscountRule;
 use crate::domain::money::money::Money;
 use crate::domain::money::rounding::round;
 
-pub fn apply_discounts(
-    net_total: &Money,
-    rules: &[DiscountRule],
-) -> Money {
+pub fn apply_discounts(net_total: &Money, rules: &[DiscountRule]) -> Money {
     let mut current = net_total.clone();
 
     let mut rules = rules.to_vec();
@@ -14,12 +11,10 @@ pub fn apply_discounts(
 
     for rule in rules {
         let discount_amount = match &rule.discount {
-            Discount::Percentage { rate } => {
-                Money::new(
-                    round(current.amount() * *rate, current.currency().minor_units()),
-                    current.currency(),
-                )
-            }
+            Discount::Percentage { rate } => Money::new(
+                round(current.amount() * *rate, current.currency().minor_units()),
+                current.currency(),
+            ),
 
             Discount::FixedAmount { amount } => {
                 if amount.currency() != current.currency() {

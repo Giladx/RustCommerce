@@ -5,7 +5,6 @@ mod tests {
 
     use rust_decimal_macros::dec;
 
-
     #[test]
     fn vat_from_net_ils() {
         let net = Money::new(dec!(100), Currency::ILS);

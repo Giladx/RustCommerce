@@ -35,10 +35,12 @@ impl Cart {
 
     pub fn calculate_totals(&self) -> CartTotals {
         // 1️⃣ Sum NET line totals
-        let net_total = self.items.iter().fold(
-            Money::zero(self.currency),
-            |acc, item| acc.add(&item.line_total_net()).unwrap(),
-        );
+        let net_total = self
+            .items
+            .iter()
+            .fold(Money::zero(self.currency), |acc, item| {
+                acc.add(&item.line_total_net()).unwrap()
+            });
 
         // 2️⃣ Apply discounts on NET only
         let discounted_net = apply_discounts(&net_total, &self.discounts);
