@@ -5,7 +5,6 @@ use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use sqlx::PgPool;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::api::dto::*;
