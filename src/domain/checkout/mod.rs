@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ShoppingCart {
     pub id: Uuid,
     pub store_id: Uuid,
@@ -22,7 +22,7 @@ pub struct ShoppingCart {
     pub converted_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CartItem {
     pub id: Uuid,
     pub cart_id: Uuid,
@@ -35,7 +35,7 @@ pub struct CartItem {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Order {
     pub id: Uuid,
     pub order_number: String,
@@ -63,7 +63,7 @@ pub struct Order {
     pub cancelled_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderItem {
     pub id: Uuid,
     pub order_id: Uuid,
@@ -78,7 +78,7 @@ pub struct OrderItem {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderStatus {
     pub id: Uuid,
     pub code: String,
@@ -93,7 +93,7 @@ pub struct OrderStatus {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderStatusTransition {
     pub id: Uuid,
     pub from_status_id: Uuid,
@@ -103,7 +103,7 @@ pub struct OrderStatusTransition {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderStatusHistory {
     pub id: Uuid,
     pub order_id: Uuid,
@@ -115,7 +115,7 @@ pub struct OrderStatusHistory {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Invoice {
     pub id: Uuid,
     pub invoice_number: String,
@@ -138,7 +138,7 @@ pub struct Invoice {
     pub paid_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct DeliverySlip {
     pub id: Uuid,
     pub slip_number: String,
@@ -155,7 +155,7 @@ pub struct DeliverySlip {
     pub estimated_delivery: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CreditSlip {
     pub id: Uuid,
     pub slip_number: String,
@@ -171,7 +171,7 @@ pub struct CreditSlip {
     pub processed_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct GiftCard {
     pub id: Uuid,
     pub code: String,

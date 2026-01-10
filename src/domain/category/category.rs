@@ -10,5 +10,6 @@ pub struct Category {
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
+    pub is_active: bool,
     pub created_at: DateTime<Utc>,
 }

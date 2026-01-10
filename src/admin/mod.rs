@@ -315,6 +315,7 @@ async fn create_category(
         name: form.name.trim().to_owned(),
         slug: slugify(&form.name),
         description: optional_text(form.description),
+        is_active: true,
         created_at: Utc::now(),
     };
 
@@ -343,6 +344,7 @@ async fn update_category(
         form.name.trim(),
         &slugify(&form.name),
         &optional_text(form.description),
+        true,
     )
     .await
     {
@@ -383,9 +385,13 @@ async fn create_product(
         id: Uuid::new_v4(),
         store_id: form.store_id,
         category_id: form.category_id,
+        brand_id: None,
         title: form.title.trim().to_owned(),
         slug: slugify(&form.title),
         description: optional_text(form.description),
+        price: None,
+        compare_price: None,
+        cost_price: None,
         is_active: form.is_active.unwrap_or(true),
         created_at: Utc::now(),
     };
