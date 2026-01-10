@@ -1,5 +1,5 @@
 -- Add migration script here
-CREATE TABLE stores (
+CREATE TABLE IF NOT EXISTS stores (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     domain TEXT,
@@ -8,7 +8,7 @@ CREATE TABLE stores (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
     id UUID PRIMARY KEY,
     store_id UUID NOT NULL REFERENCES stores(id),
     title TEXT NOT NULL,

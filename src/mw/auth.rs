@@ -1,5 +1,4 @@
 use axum::{
-    body::Body,
     extract::Request,
     http::StatusCode,
     middleware::Next,
@@ -12,6 +11,26 @@ pub async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // Get pool from extensions
+    let pool = req
+        .extensions()
+        .get::<PgPool>()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Check if Auth is enabled globally
+    let auth_enabled_row = sqlx::query!("SELECT value FROM system_settings WHERE key = 'api_auth_enabled'")
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let auth_enabled = auth_enabled_row
+        .map(|r| r.value == "true")
+        .unwrap_or(false);
+
+    if !auth_enabled {
+        return Ok(next.run(req).await);
+    }
+
     // Get Authorization header
     let auth_header = req
         .headers()

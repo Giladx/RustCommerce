@@ -6,6 +6,7 @@ use uuid::Uuid;
 pub struct ShoppingCart {
     pub id: Uuid,
     pub store_id: Uuid,
+    pub customer_id: Option<Uuid>,
     pub customer_email: Option<String>,
     pub customer_name: Option<String>,
     pub session_id: Option<String>,
@@ -41,6 +42,7 @@ pub struct Order {
     pub order_number: String,
     pub store_id: Uuid,
     pub cart_id: Option<Uuid>,
+    pub customer_id: Option<Uuid>,
     pub customer_email: String,
     pub customer_name: String,
     pub customer_phone: Option<String>,

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+mod auth;
+
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{Extension, Path},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
@@ -39,7 +41,29 @@ enum AdminNav {
     Dashboard,
     Catalog,
     Orders,
-    Docs,
+    ApiTokens,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AdminApiToken {
+    id: Uuid,
+    name: String,
+    token: String,
+    description: Option<String>,
+    is_active: bool,
+    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenForm {
+    name: String,
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SettingsForm {
+    api_auth_enabled: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,11 +126,15 @@ struct BrandForm {
 }
 
 #[derive(Debug, Deserialize)]
-struct OrderForm {
-    store_id: Uuid,
-    customer_email: String,
-    customer_name: String,
-    total_amount: f64,
+struct OrderCreateForm {
+    store_id: Option<Uuid>,
+    mode: Option<String>,
+    customer_email: Option<String>,
+    customer_name: Option<String>,
+    existing_cart_id: Option<String>,
+    existing_customer_name: Option<String>,
+    item_product_id: Option<Vec<String>>,
+    item_quantity: Option<Vec<i32>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,10 +144,14 @@ struct OrderStatusForm {
 }
 
 pub fn router() -> Router {
-    Router::new()
+    let protected_routes = Router::new()
         .route("/", get(dashboard_page))
         .route("/admin", get(dashboard_page))
         .route("/admin/docs", get(api_docs))
+        // API Tokens & Settings
+        .route("/admin/api-tokens", get(api_tokens_page).post(create_api_token))
+        .route("/admin/api-tokens/:id/toggle", post(toggle_api_token))
+        .route("/admin/settings/auth", post(update_api_auth_settings))
         // Stores
         .route("/admin/stores", get(stores_page).post(create_store))
         .route("/admin/stores/:id/update", post(update_store))
@@ -149,7 +181,7 @@ pub fn router() -> Router {
         // Attributes & Features
         .route(
             "/admin/product-attributes",
-            get(dashboard_page).post(create_attribute),
+            get(attributes_page).post(create_attribute),
         )
         .route(
             "/admin/product-attributes/:id/update",
@@ -161,10 +193,19 @@ pub fn router() -> Router {
         )
         .route(
             "/admin/product-features",
-            get(dashboard_page).post(create_feature),
+            get(features_page).post(create_feature),
         )
         .route("/admin/product-features/:id/update", post(update_feature))
         .route("/admin/product-features/:id/delete", post(delete_feature))
+        .layer(axum::middleware::from_fn(auth::admin_auth_middleware));
+
+    let public_routes = Router::new()
+        .route("/admin/login", get(auth::login_page).post(auth::login_handler))
+        .route("/admin/logout", get(auth::logout_handler));
+
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
 }
 
 async fn dashboard_page(
@@ -297,32 +338,33 @@ async fn brands_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     ))
 }
 
-async fn catalog_page(Extension(pool): Extension<PgPool>) -> Html<String> {
-    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
-    let categories = category_repository::list_categories(&pool).await.unwrap_or_default();
+async fn catalog_page() -> Redirect {
+    Redirect::to("/admin/categories")
+}
+
+async fn attributes_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let products = product_repository::list_products(&pool).await.unwrap_or_default();
-    let brands = sqlx::query_as::<_, Brand>("SELECT * FROM brands ORDER BY name")
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
     let attributes = product_attribute_repository::list_attributes(&pool)
         .await
         .unwrap_or_default();
+    Html(render_page(
+        AdminNav::Catalog,
+        "Attributes",
+        "Create and edit product attributes",
+        &render_attribute_section(&attributes, &products),
+    ))
+}
+
+async fn features_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let products = product_repository::list_products(&pool).await.unwrap_or_default();
     let features = product_feature_repository::list_features(&pool)
         .await
         .unwrap_or_default();
     Html(render_page(
         AdminNav::Catalog,
-        "Catalog",
-        "Manage your catalog hierarchy and details",
-        &render_catalog_content(
-            &stores,
-            &categories,
-            &products,
-            &brands,
-            &attributes,
-            &features,
-        ),
+        "Features",
+        "Attach descriptive feature values per product",
+        &render_feature_section(&features, &products),
     ))
 }
 
@@ -330,44 +372,26 @@ async fn orders_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
     let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
     let statuses = checkout_repository::list_order_statuses(&pool).await.unwrap_or_default();
+    let products = product_repository::list_products(&pool).await.unwrap_or_default();
     Html(render_page(
         AdminNav::Orders,
         "Orders",
         "View and manage customer orders",
-        &render_orders_content(&orders, &stores, &statuses),
+        &render_orders_content(&orders, &stores, &statuses, &products),
     ))
 }
 
 async fn create_order(
     Extension(pool): Extension<PgPool>,
-    Form(form): Form<OrderForm>,
+    Form(form): Form<OrderCreateForm>,
 ) -> impl IntoResponse {
-    let total = match Decimal::from_f64(form.total_amount) {
-        Some(value) => value,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Html(render_error("Invalid total amount")),
-            )
-                .into_response();
-        }
-    };
-
-    match checkout_repository::create_order(
-        &pool,
-        form.store_id,
-        form.customer_email.trim().to_owned(),
-        form.customer_name.trim().to_owned(),
-        total,
-    )
-    .await
-    {
+    match create_order_from_form(&pool, form).await {
         Ok(_) => Redirect::to("/admin/orders").into_response(),
-        Err(err) => {
-            eprintln!("Failed to create order: {err:?}");
+        Err(message) => {
+            eprintln!("Failed to create order: {message}");
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Html(render_error("Unable to create order")),
+                StatusCode::BAD_REQUEST,
+                Html(render_error(&message)),
             )
                 .into_response()
         }
@@ -392,6 +416,167 @@ async fn update_order_status(
                 .into_response()
         }
     }
+}
+
+async fn create_order_from_form(
+    pool: &PgPool,
+    form: OrderCreateForm,
+) -> Result<Order, String> {
+    let mode = form.mode.as_deref().unwrap_or("new");
+    let store_id = form
+        .store_id
+        .ok_or_else(|| "Store is required.".to_string())?;
+
+    if mode == "existing" {
+        let cart_id = form
+            .existing_cart_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| Uuid::parse_str(value).map_err(|_| "Invalid cart ID.".to_string()))
+            .transpose()?;
+
+        let cart = if let Some(cart_id) = cart_id {
+            let cart = checkout_repository::get_cart(pool, cart_id)
+                .await
+                .map_err(|_| "Cart not found.".to_string())?;
+            if cart.store_id != store_id {
+                return Err("Cart does not belong to the selected store.".to_string());
+            }
+            cart
+        } else {
+            let customer_name = form
+                .existing_customer_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Provide a cart ID or customer name.".to_string())?;
+            checkout_repository::find_cart_by_customer_name(pool, store_id, customer_name)
+                .await
+                .map_err(|_| "Unable to search carts.".to_string())?
+                .ok_or_else(|| "No cart found for that customer name.".to_string())?
+        };
+
+        let cart_items = checkout_repository::get_cart_items(pool, cart.id)
+            .await
+            .map_err(|_| "Unable to load cart items.".to_string())?;
+        if cart_items.is_empty() {
+            return Err("Selected cart has no items.".to_string());
+        }
+
+        let customer_email = optional_text(cart.customer_email.clone())
+            .ok_or_else(|| "Cart is missing customer email.".to_string())?;
+        let customer_name = optional_text(cart.customer_name.clone())
+            .ok_or_else(|| "Cart is missing customer name.".to_string())?;
+
+        let total = cart_items
+            .iter()
+            .fold(Decimal::from_i32(0).unwrap_or_default(), |acc, item| acc + item.line_total);
+
+        let order = checkout_repository::create_order_from_cart(
+            pool,
+            cart.id,
+            cart.store_id,
+            customer_email,
+            customer_name,
+            total,
+        )
+        .await
+        .map_err(|_| "Unable to create order from cart.".to_string())?;
+
+        checkout_repository::mark_cart_converted(pool, cart.id)
+            .await
+            .map_err(|_| "Unable to finalize cart.".to_string())?;
+
+        return Ok(order);
+    }
+
+    let customer_email = optional_text(form.customer_email)
+        .ok_or_else(|| "Customer email is required.".to_string())?;
+    let customer_name = optional_text(form.customer_name)
+        .ok_or_else(|| "Customer name is required.".to_string())?;
+
+    let items = parse_cart_items(form.item_product_id, form.item_quantity)?;
+    if items.is_empty() {
+        return Err("Add at least one product to the cart.".to_string());
+    }
+
+    let cart = checkout_repository::create_cart(pool, store_id, None)
+        .await
+        .map_err(|_| "Unable to create cart.".to_string())?;
+    checkout_repository::update_cart_customer(
+        pool,
+        cart.id,
+        Some(customer_email.clone()),
+        Some(customer_name.clone()),
+    )
+    .await
+    .map_err(|_| "Unable to set cart customer info.".to_string())?;
+
+    let mut total = Decimal::from_i32(0).unwrap_or_default();
+    for item in items {
+        let product = product_repository::get_product_by_id(pool, item.product_id)
+            .await
+            .map_err(|_| "Unable to load product.".to_string())?;
+        let unit_price = product.price.unwrap_or_else(|| Decimal::from_i32(0).unwrap_or_default());
+        let quantity = Decimal::from_i32(item.quantity).unwrap_or_default();
+        total += unit_price * quantity;
+        checkout_repository::add_cart_item(
+            pool,
+            cart.id,
+            item.product_id,
+            item.quantity,
+            unit_price,
+        )
+        .await
+        .map_err(|_| "Unable to add item to cart.".to_string())?;
+    }
+
+    let order = checkout_repository::create_order_from_cart(
+        pool,
+        cart.id,
+        store_id,
+        customer_email,
+        customer_name,
+        total,
+    )
+    .await
+    .map_err(|_| "Unable to create order.".to_string())?;
+
+    checkout_repository::mark_cart_converted(pool, cart.id)
+        .await
+        .map_err(|_| "Unable to finalize cart.".to_string())?;
+
+    Ok(order)
+}
+
+#[derive(Debug)]
+struct CartItemInput {
+    product_id: Uuid,
+    quantity: i32,
+}
+
+fn parse_cart_items(
+    product_ids: Option<Vec<String>>,
+    quantities: Option<Vec<i32>>,
+) -> Result<Vec<CartItemInput>, String> {
+    let product_ids = product_ids.unwrap_or_default();
+    let quantities = quantities.unwrap_or_default();
+    let mut items = Vec::new();
+
+    for (index, raw_id) in product_ids.into_iter().enumerate() {
+        let trimmed = raw_id.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let product_id =
+            Uuid::parse_str(&trimmed).map_err(|_| "Invalid product selection.".to_string())?;
+        let quantity = quantities.get(index).copied().unwrap_or(1).max(1);
+        items.push(CartItemInput { product_id, quantity });
+    }
+
+    Ok(items)
 }
 
 async fn invoices_page(Extension(pool): Extension<PgPool>) -> Html<String> {
@@ -797,7 +982,7 @@ async fn create_attribute(
     };
 
     match product_attribute_repository::insert_attribute(&pool, &attribute).await {
-        Ok(_) => Redirect::to("/admin").into_response(),
+        Ok(_) => Redirect::to("/admin/product-attributes").into_response(),
         Err(err) => {
             eprintln!("Failed to create attribute: {err:?}");
             (
@@ -823,7 +1008,7 @@ async fn update_attribute(
     )
     .await
     {
-        Ok(_) => Redirect::to("/admin").into_response(),
+        Ok(_) => Redirect::to("/admin/product-attributes").into_response(),
         Err(err) => {
             eprintln!("Failed to update attribute: {err:?}");
             (
@@ -840,7 +1025,7 @@ async fn delete_attribute(
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
     match product_attribute_repository::delete_attribute(&pool, id).await {
-        Ok(_) => Redirect::to("/admin").into_response(),
+        Ok(_) => Redirect::to("/admin/product-attributes").into_response(),
         Err(err) => {
             eprintln!("Failed to delete attribute: {err:?}");
             (
@@ -865,7 +1050,7 @@ async fn create_feature(
     };
 
     match product_feature_repository::insert_feature(&pool, &feature).await {
-        Ok(_) => Redirect::to("/admin").into_response(),
+        Ok(_) => Redirect::to("/admin/product-features").into_response(),
         Err(err) => {
             eprintln!("Failed to create feature: {err:?}");
             (
@@ -890,7 +1075,7 @@ async fn update_feature(
     )
     .await
     {
-        Ok(_) => Redirect::to("/admin").into_response(),
+        Ok(_) => Redirect::to("/admin/product-features").into_response(),
         Err(err) => {
             eprintln!("Failed to update feature: {err:?}");
             (
@@ -907,7 +1092,7 @@ async fn delete_feature(
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
     match product_feature_repository::delete_feature(&pool, id).await {
-        Ok(_) => Redirect::to("/admin").into_response(),
+        Ok(_) => Redirect::to("/admin/product-features").into_response(),
         Err(err) => {
             eprintln!("Failed to delete feature: {err:?}");
             (
@@ -920,11 +1105,222 @@ async fn delete_feature(
 }
 
 
-fn is_missing_relation(err: &sqlx::Error) -> bool {
-    matches!(
-        err,
-        sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("42P01")
+// ===== API Token Handlers =====
+
+async fn api_tokens_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let tokens = sqlx::query_as::<_, AdminApiToken>(
+        "SELECT * FROM api_tokens ORDER BY created_at DESC"
     )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let auth_enabled_row = sqlx::query!("SELECT value FROM system_settings WHERE key = 'api_auth_enabled'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+    
+    let auth_enabled = auth_enabled_row.map(|r| r.value == "true").unwrap_or(false);
+
+    Html(render_page(
+        AdminNav::ApiTokens,
+        "API Access",
+        "Manage API tokens and authentication settings",
+        &render_api_tokens_content(&tokens, auth_enabled),
+    ))
+}
+
+async fn create_api_token(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<TokenForm>,
+) -> impl IntoResponse {
+    let token = Uuid::new_v4().to_string(); // Simple UUID token for now
+    
+    let result = sqlx::query!(
+        "INSERT INTO api_tokens (name, token, description) VALUES ($1, $2, $3)",
+        form.name,
+        token,
+        form.description
+    )
+    .execute(&pool)
+    .await;
+
+    match result {
+        Ok(_) => Redirect::to("/admin/api-tokens").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create token: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create token")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn toggle_api_token(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let result = sqlx::query!(
+        "UPDATE api_tokens SET is_active = NOT is_active WHERE id = $1",
+        id
+    )
+    .execute(&pool)
+    .await;
+
+    match result {
+        Ok(_) => Redirect::to("/admin/api-tokens").into_response(),
+        Err(err) => {
+            eprintln!("Failed to toggle token: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to toggle token status")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_api_auth_settings(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<SettingsForm>,
+) -> impl IntoResponse {
+    let enabled = form.api_auth_enabled.is_some();
+    let value = if enabled { "true" } else { "false" };
+
+    let result = sqlx::query!(
+        "INSERT INTO system_settings (key, value) VALUES ('api_auth_enabled', $1) 
+         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+        value
+    )
+    .execute(&pool)
+    .await;
+
+    match result {
+        Ok(_) => Redirect::to("/admin/api-tokens").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update settings: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update settings")),
+            )
+                .into_response()
+        }
+    }
+}
+
+fn render_api_tokens_content(tokens: &[AdminApiToken], auth_enabled: bool) -> String {
+    let header = r#"<div class="flex items-center justify-between mb-6">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">API Tokens</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400">Manage access keys for third-party integrations.</p>
+            </div>
+            <button type="button" data-modal-target="token" data-modal-mode="create" data-modal-action="/admin/api-tokens" data-modal-title="Generate Token" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Generate Token</button>
+        </div>"#;
+
+    let settings_panel = format!(
+        r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-6 border border-gray-200 dark:border-dark-border mb-8">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-white mb-2">Global Security Settings</h3>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Control whether the API requires authentication for all requests.</p>
+            <form action="/admin/settings/auth" method="post">
+                <label class="inline-flex items-center cursor-pointer">
+                    <input type="checkbox" name="api_auth_enabled" class="sr-only peer" {}>
+                    <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                    <span class="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">Enforce API Authentication</span>
+                </label>
+                <div class="mt-2">
+                    <button type="submit" class="text-sm text-blue-600 dark:text-blue-400 hover:underline">Save Changes</button>
+                </div>
+            </form>
+        </div>"#,
+        if auth_enabled { "checked" } else { "" }
+    );
+
+    let rows = if tokens.is_empty() {
+        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No tokens generated yet.</td></tr>"#.to_string()
+    } else {
+        tokens
+            .iter()
+            .map(|token| {
+                let status_badge = if token.is_active {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Active</span>"#
+                } else {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">Revoked</span>"#
+                };
+                
+                let toggle_label = if token.is_active { "Revoke" } else { "Enable" };
+                let toggle_class = if token.is_active { "bg-red-600 hover:bg-red-700" } else { "bg-green-600 hover:bg-green-700" };
+
+                format!(
+                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                        <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3"><code class="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{}</code></td>
+                        <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
+                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
+                        <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
+                        <td class="px-4 py-3">
+                            <form method="post" action="/admin/api-tokens/{}/toggle">
+                                <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors {}">{}</button>
+                            </form>
+                        </td>
+                    </tr>"#,
+                    html_escape(&token.name),
+                    token.token,
+                    token.description.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    status_badge,
+                    token.last_used_at.map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "Never".to_string()),
+                    token.created_at.format("%Y-%m-%d").to_string(),
+                    token.id,
+                    toggle_class,
+                    toggle_label
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        "{}{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
+            <table class=\"w-full\">
+                <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
+                    <tr>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Name</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Token</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Description</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Status</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Last Used</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Created</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>{template}",
+        settings_panel,
+        header = header,
+        rows = rows,
+        template = render_token_modal_template()
+    )
+}
+
+fn render_token_modal_template() -> String {
+    r#"<template id="modal-token-template">
+        <form method="post" class="space-y-4">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Name
+                <input name="name" required placeholder="e.g. Mobile App, Internal Tool" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Description
+                <textarea name="description" rows="3" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+            </label>
+            <div class="text-right">
+                <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Generate Token</button>
+            </div>
+        </form>
+    </template>"#.to_string()
 }
 
 async fn api_docs() -> Html<String> {
@@ -933,27 +1329,107 @@ async fn api_docs() -> Html<String> {
 
 fn render_api_docs() -> String {
     let endpoints = vec![
-        ("GET", "/health", "Simple service heartbeat"),
-        ("GET", "/products", "List all products"),
-        ("POST", "/products", "Create a product with attributes"),
-        ("GET", "/products/{id}", "Fetch a product by ID"),
-        ("PUT", "/products/{id}", "Update a product"),
-        ("DELETE", "/products/{id}", "Remove a product"),
-        ("POST", "/stores", "Create a new store"),
+        ("GET", "/api/health", "Simple service heartbeat", "None"),
+        ("GET", "/api/products", "List all products", "None"),
+        ("POST", "/api/products", "Create a product", r#"{
+  "store_id": "UUID",
+  "category_id": "UUID (optional)",
+  "title": "String",
+  "description": "String (optional)",
+  "attributes": [{"name": "String", "value": "String"}],
+  "features": [{"label": "String", "value": "String"}]
+}"#),
+        ("GET", "/api/products/{id}", "Fetch a product by ID", "None"),
+        ("PUT", "/api/products/{id}", "Update a product", r#"{
+  "category_id": "UUID (optional)",
+  "title": "String (optional)",
+  "description": "String (optional)",
+  "is_active": "Boolean (optional)",
+  "slug": "String (optional)"
+}"#),
+        ("DELETE", "/api/products/{id}", "Remove a product", "None"),
+        ("POST", "/api/stores", "Create a new store", r#"{
+  "name": "String",
+  "domain": "String (optional)",
+  "currency": "String (e.g. USD, ILS)",
+  "timezone": "String (e.g. UTC)"
+}"#),
+        ("GET", "/api/stores", "List all stores", "None"),
+        ("GET", "/api/categories", "List all categories", "None"),
+        ("GET", "/api/brands", "List all brands", "None"),
+        ("POST", "/api/carts", "Create a shopping cart", r#"{
+  "store_id": "UUID",
+  "session_id": "String (optional)"
+}"#),
+        ("POST", "/api/carts/{id}/items", "Add item to cart", r#"{
+  "product_id": "UUID",
+  "quantity": "Integer",
+  "unit_price": "Float"
+}"#),
+        ("POST", "/api/cart/calculate", "Calculate cart totals (stateless)", r#"{
+  "items": [{"product_id": "UUID", "quantity": 1, "unit_price": 100.0}],
+  "currency": "USD",
+  "vat_rate": 0.17,
+  "discounts": []
+}"#),
+        ("POST", "/api/checkout", "Create an order from cart", r#"{
+  "store_id": "UUID",
+  "customer_email": "String",
+  "customer_name": "String",
+  "total_amount": "Float"
+}"#),
     ];
 
     let endpoint_rows = endpoints
         .into_iter()
-        .map(|(method, path, desc)| {
+        .map(|(method, path, desc, body)| {
+            let method_class = match method {
+                "GET" => "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+                "POST" => "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+                "PUT" => "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
+                "DELETE" => "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+                _ => "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400",
+            };
+
+            let curl_cmd = if body != "None" {
+                format!(
+                    r#"curl -X {} http://localhost:3000{} \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{}'"#,
+                    method, path, body.replace('\n', " ").replace("  ", "")
+                )
+            } else {
+                format!(
+                    r#"curl -X {} http://localhost:3000{} \
+  -H "Authorization: Bearer YOUR_TOKEN""#,
+                    method, path
+                )
+            };
+
             format!(
-                r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                    <td class="px-4 py-3"><span class="tag">{}</span></td>
-                    <td class="px-4 py-3"><code>{}</code></td>
-                    <td class="px-4 py-3">{}</td>
-                </tr>"#,
-                method,
-                path,
-                desc
+                r#"<div class="border border-gray-200 dark:border-dark-border rounded-lg overflow-hidden mb-4">
+                    <div class="bg-gray-50 dark:bg-slate-800/50 px-4 py-3 flex items-center justify-between cursor-pointer" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                        <div class="flex items-center gap-3">
+                            <span class="px-2 py-1 text-xs font-bold rounded {}">{}</span>
+                            <code class="text-sm font-semibold text-gray-700 dark:text-gray-300">{}</code>
+                        </div>
+                        <span class="text-sm text-gray-500 dark:text-gray-400">{}</span>
+                    </div>
+                    <div class="p-4 bg-white dark:bg-dark-panel hidden">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div>
+                                <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Request Body Schema</h4>
+                                <pre class="text-xs bg-gray-50 dark:bg-slate-900 p-3 rounded-lg overflow-x-auto font-mono text-gray-700 dark:text-gray-300">{}</pre>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Example Usage (Curl)</h4>
+                                <pre class="text-xs bg-gray-900 text-blue-300 p-3 rounded-lg overflow-x-auto font-mono">{}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>"#,
+                method_class, method, path, desc, body, curl_cmd
             )
         })
         .collect::<Vec<_>>()
@@ -965,99 +1441,82 @@ fn render_api_docs() -> String {
 <head>
     <meta charset="utf-8" />
     <title>RustCommerce API Docs</title>
-    <style>
-        body {{
-            font-family: 'Inter', system-ui, sans-serif;
-            background: #0f172a;
-            color: #e2e8f0;
-            margin: 0;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            padding: 2rem;
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {{
+            darkMode: 'class',
+            theme: {{
+                extend: {{
+                    colors: {{
+                        primary: '#3b82f6',
+                        dark: {{
+                            bg: '#0f172a',
+                            panel: '#1e293b',
+                            border: '#334155'
+                        }}
+                    }}
+                }}
+            }}
         }}
-        .card {{
-            background: #111c33;
-            border-radius: 24px;
-            padding: 2rem;
-            max-width: 840px;
-            width: 100%;
-            box-shadow: 0 30px 80px rgba(15,23,42,0.45);
-        }}
-        h1 {{ margin-top: 0; font-size: 2.2rem; }}
-        p {{ color: #94a3b8; }}
-        .grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 1.25rem;
-            margin: 1.5rem 0;
-        }}
-        .panel {{
-            background: rgba(255,255,255,0.03);
-            border-radius: 16px;
-            padding: 1rem 1.25rem;
-        }}
-        .panel h2 {{ margin-top: 0; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.08em; color: #cbd5f5; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 1rem; }}
-        th, td {{ padding: 0.65rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }}
-        th {{ text-align: left; font-size: 0.75rem; letter-spacing: 0.08em; color: #94a3b8; }}
-        code {{ background: rgba(148, 163, 184, 0.16); padding: 0.2rem 0.4rem; border-radius: 6px; }}
-        .tag {{
-            border-radius: 999px;
-            padding: 0.15rem 0.65rem;
-            font-weight: 600;
-            background: rgba(59, 130, 246, 0.2);
-            border: 1px solid rgba(59, 130, 246, 0.35);
-        }}
-        a {{ color: #60a5fa; }}
-    </style>
+    </script>
 </head>
-<body>
-    <div class="card">
-        <a href="/admin" style="color:#94a3b8">← Back to dashboard</a>
-        <h1>RustCommerce API</h1>
-        <p>Base URL: <code>http://localhost:3000</code>. Every endpoint speaks JSON and requires the appropriate body payload. Use tools like curl, HTTPie, or Postman.</p>
-
-        <div class="grid">
-            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
-                <h2>Bootstrapping</h2>
-                <p>1. Create a store via <code>POST /stores</code><br />
-                   2. Add categories (optional) then create products<br />
-                   3. Attach attributes &amp; features through the admin UI or JSON payloads.</p>
+<body class="bg-gray-50 dark:bg-dark-bg text-gray-900 dark:text-gray-100 transition-colors min-h-screen p-8">
+    <div class="max-w-5xl mx-auto">
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <a href="/admin" class="text-sm text-blue-600 dark:text-blue-400 hover:underline mb-2 inline-block">← Back to Dashboard</a>
+                <h1 class="text-3xl font-bold">API Documentation</h1>
+                <p class="text-gray-600 dark:text-gray-400 mt-2">Comprehensive reference for the RustCommerce API.</p>
             </div>
-            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
-                <h2>Authentication</h2>
-                <p>No auth yet. The server expects trusted traffic only. Wire up API keys or JWT when deploying.</p>
+            <button onclick="document.documentElement.classList.toggle('dark')" class="p-2 rounded-lg bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border">
+                <span class="material-icons text-gray-600 dark:text-gray-300">contrast</span>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white dark:bg-dark-panel p-6 rounded-xl border border-gray-200 dark:border-dark-border shadow-sm">
+                <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                    <span class="material-icons text-blue-500">lock</span>
+                    Authentication
+                </h2>
+                <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    The API supports both <strong>Bearer Token</strong> and <strong>Basic Auth</strong>.
+                    You can manage tokens in the <a href="/admin/api-tokens" class="text-blue-600 hover:underline">API Access</a> section.
+                </p>
+                <div class="space-y-2">
+                    <div class="text-xs font-mono bg-gray-100 dark:bg-slate-900 p-2 rounded border border-gray-200 dark:border-dark-border">
+                        Authorization: Bearer &lt;YOUR_TOKEN&gt;
+                    </div>
+                    <div class="text-xs font-mono bg-gray-100 dark:bg-slate-900 p-2 rounded border border-gray-200 dark:border-dark-border">
+                        Authorization: Basic &lt;BASE64(user:token)&gt;
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-dark-panel p-6 rounded-xl border border-gray-200 dark:border-dark-border shadow-sm">
+                <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                    <span class="material-icons text-green-500">check_circle</span>
+                    Response Format
+                </h2>
+                <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    All successful responses return <code>200 OK</code> or <code>201 Created</code> with a JSON body.
+                    Errors return <code>4xx</code> or <code>5xx</code> codes.
+                </p>
+                <div class="text-xs font-mono bg-gray-100 dark:bg-slate-900 p-2 rounded border border-gray-200 dark:border-dark-border">
+                    Content-Type: application/json
+                </div>
             </div>
         </div>
 
-        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
-            <h2>Endpoints</h2>
-            <table class="w-full">
-                <thead class="bg-gray-50 dark:bg-slate-800/50">
-                    <tr>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Method</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Path</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Description</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {endpoint_rows}
-                </tbody>
-            </table>
+        <div class="space-y-6">
+            <h2 class="text-xl font-bold border-b border-gray-200 dark:border-dark-border pb-2">Endpoints</h2>
+            {endpoint_rows}
         </div>
 
-        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
-            <h2>Sample Payload</h2>
-            <pre style="background:rgba(15,23,42,0.9); padding:1rem; border-radius:14px; overflow:auto;">{{
-  "store_id": "00000000-0000-0000-0000-000000000000",
-  "category_id": null,
-  "title": "Laptop",
-  "description": "14\" ultrabook",
-  "attributes": [{{"name":"Color","value":"Silver"}}],
-  "features": [{{"label":"CPU","value":"M3"}}]
-}}</pre>
-        </div>
+        <footer class="mt-12 text-center text-sm text-gray-500 dark:text-gray-400 pb-8">
+            RustCommerce API v1.0 • <a href="/admin/api-tokens" class="hover:underline">Manage Keys</a>
+        </footer>
     </div>
 </body>
 </html>
@@ -1188,6 +1647,10 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
             adminModalBody.innerHTML = '';
             adminModalBody.appendChild(form);
             adminModal.classList.remove('hidden');
+
+            if (form.dataset.orderForm) {{
+                syncOrderMode(form);
+            }}
         }}
 
         document.addEventListener('click', (event) => {{
@@ -1208,6 +1671,126 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
             if (event.key === 'Escape' && !adminModal.classList.contains('hidden')) {{
                 closeAdminModal();
             }}
+        }});
+
+        function syncOrderMode(form) {{
+            const selected = form.querySelector('input[name="mode"]:checked');
+            const mode = selected ? selected.value : 'new';
+            form.querySelectorAll('[data-order-mode]').forEach((section) => {{
+                const isActive = section.dataset.orderMode === mode;
+                section.classList.toggle('hidden', !isActive);
+                section.querySelectorAll('input, select, textarea, button').forEach((field) => {{
+                    if (field.type === 'radio') {{
+                        return;
+                    }}
+                    field.disabled = !isActive;
+                }});
+            }});
+        }}
+
+        document.addEventListener('change', (event) => {{
+            if (!event.target.matches('input[name="mode"]')) {{
+                return;
+            }}
+            const form = event.target.closest('form');
+            if (form) {{
+                syncOrderMode(form);
+            }}
+        }});
+
+        document.addEventListener('click', (event) => {{
+            const addButton = event.target.closest('[data-add-order-item]');
+            if (addButton) {{
+                const form = addButton.closest('form');
+                if (!form) return;
+                const template = form.querySelector('[data-order-item-template]');
+                const container = form.querySelector('[data-order-items]');
+                if (!template || !container) return;
+                const clone = document.importNode(template.content, true);
+                container.appendChild(clone);
+                return;
+            }}
+
+            const removeButton = event.target.closest('[data-remove-order-item]');
+            if (removeButton) {{
+                const item = removeButton.closest('[data-order-item]');
+                if (item) {{
+                    item.remove();
+                }}
+            }}
+        }});
+
+        function extractOrderId(action) {{
+            const match = action.match(/\/admin\/orders\/([^/]+)\/status/);
+            return match ? match[1] : null;
+        }}
+
+        document.addEventListener('submit', (event) => {{
+            const form = event.target;
+            if (!form || !form.matches('[data-order-status-form]')) {{
+                return;
+            }}
+
+            event.preventDefault();
+
+            const submitButton = form.querySelector('button[type="submit"]');
+            const originalLabel = submitButton ? submitButton.textContent : '';
+            if (submitButton) {{
+                submitButton.disabled = true;
+                submitButton.textContent = 'Saving...';
+            }}
+
+            fetch(form.action, {{
+                method: 'POST',
+                body: new FormData(form),
+                credentials: 'same-origin',
+                headers: {{
+                    'X-Requested-With': 'XMLHttpRequest'
+                }}
+            }})
+                .then((response) => {{
+                    if (!response.ok && !response.redirected) {{
+                        throw new Error('Status update failed');
+                    }}
+
+                    const orderId = extractOrderId(form.action);
+                    const selectedOption = form.querySelector('select[name="new_status_id"] option:checked');
+                    if (!orderId || !selectedOption) {{
+                        closeAdminModal();
+                        return;
+                    }}
+
+                    const row = document.querySelector(`tr[data-order-id="${{orderId}}"]`);
+                    const badge = row ? row.querySelector('[data-order-status]') : null;
+                    if (badge) {{
+                        const baseClass = 'px-2 py-1 text-xs font-medium rounded-full';
+                        const statusClass = selectedOption.dataset.statusClass
+                            || 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400';
+                        badge.className = `${{baseClass}} ${{statusClass}}`;
+                        badge.textContent = selectedOption.textContent.trim();
+                    }}
+
+                    const notesField = form.querySelector('textarea[name="notes"]');
+                    const editButton = row ? row.querySelector('[data-modal-target="order-edit"]') : null;
+                    if (editButton) {{
+                        editButton.dataset.modalPayload = JSON.stringify({{
+                            status_id: selectedOption.value,
+                            notes: notesField ? notesField.value : ''
+                        }});
+                    }}
+
+                    closeAdminModal();
+                }})
+                .catch((err) => {{
+                    console.error('Order status update failed', err);
+                    form.submit();
+                }})
+                .finally(() => {{
+                    if (submitButton) {{
+                        submitButton.disabled = false;
+                        submitButton.textContent = originalLabel || 'Save';
+                    }}
+                }});
         }});
 
         function toggleTheme() {{
@@ -1231,16 +1814,17 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
 fn render_navigation(active: AdminNav) -> String {
     let nav_items = [
         (AdminNav::Dashboard, "dashboard", "Dashboard", "/admin"),
-        (AdminNav::Catalog, "inventory_2", "Catalog", "/admin/catalog"),
+        (AdminNav::Catalog, "inventory_2", "Catalog", "/admin/categories"),
         (AdminNav::Orders, "receipt_long", "Orders", "/admin/orders"),
+        (AdminNav::ApiTokens, "key", "API Access", "/admin/api-tokens"),
     ];
 
     let catalog_entries = [
-        ("category", "Categories", "/admin/catalog#categories"),
-        ("inventory_2", "Products", "/admin/catalog#products"),
-        ("sell", "Brands", "/admin/catalog#brands"),
-        ("list_alt", "Attributes", "/admin/catalog#attributes"),
-        ("label", "Features", "/admin/catalog#features"),
+        ("category", "Categories", "/admin/categories"),
+        ("inventory_2", "Products", "/admin/products"),
+        ("sell", "Brands", "/admin/brands"),
+        ("list_alt", "Attributes", "/admin/product-attributes"),
+        ("label", "Features", "/admin/product-features"),
     ];
 
     let order_items = [
@@ -1336,32 +1920,15 @@ fn render_navigation(active: AdminNav) -> String {
                         <span>API Docs</span>
                     </a>
                 </div>
+
+                <div class="pt-6 border-t border-slate-800 dark:border-dark-border">
+                    <a href="/admin/logout" class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-medium text-red-400 hover:bg-slate-800 hover:text-red-300">
+                        <span class="material-icons">logout</span>
+                        <span>Sign Out</span>
+                    </a>
+                </div>
             </nav>"#,
         primary_links, catalog_links, order_links
-    )
-}
-
-fn render_catalog_content(
-    stores: &[Store],
-    categories: &[Category],
-    products: &[Product],
-    brands: &[Brand],
-    attributes: &[ProductAttribute],
-    features: &[ProductFeature],
-) -> String {
-    format!(
-        r#"<div class="space-y-10">
-            <section id="categories">{}</section>
-            <section id="products">{}</section>
-            <section id="brands">{}</section>
-            <section id="attributes">{}</section>
-            <section id="features">{}</section>
-        </div>"#,
-        render_categories_content(stores, categories),
-        render_products_content(stores, categories, products),
-        render_brands_content(brands),
-        render_attribute_section(attributes, products),
-        render_feature_section(features, products),
     )
 }
 
@@ -2049,7 +2616,11 @@ fn render_feature_modal_template(products: &[Product]) -> String {
     )
 }
 
-fn render_order_modal_templates(stores: &[Store], statuses: &[OrderStatus]) -> String {
+fn render_order_modal_templates(
+    stores: &[Store],
+    statuses: &[OrderStatus],
+    products: &[Product],
+) -> String {
     let store_options = stores
         .iter()
         .map(|store| {
@@ -2065,10 +2636,29 @@ fn render_order_modal_templates(stores: &[Store], statuses: &[OrderStatus]) -> S
     let status_options = statuses
         .iter()
         .map(|status| {
+            let status_class = order_status_badge_class(&status.code, &status.name);
             format!(
-                r#"<option value="{}">{}</option>"#,
+                r#"<option value="{}" data-status-class="{}">{}</option>"#,
                 status.id,
+                status_class,
                 html_escape(&status.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let product_options = products
+        .iter()
+        .map(|product| {
+            let price_label = product
+                .price
+                .map(|price| format!("${}", price))
+                .unwrap_or_else(|| "No price".to_string());
+            format!(
+                r#"<option value="{}">{} • {}</option>"#,
+                product.id,
+                html_escape(&product.title),
+                price_label
             )
         })
         .collect::<Vec<_>>()
@@ -2076,7 +2666,7 @@ fn render_order_modal_templates(stores: &[Store], statuses: &[OrderStatus]) -> S
 
     format!(
         r#"<template id="modal-order-create-template">
-        <form method="post" class="space-y-4">
+        <form method="post" class="space-y-4" data-order-form="true">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Store
@@ -2085,20 +2675,88 @@ fn render_order_modal_templates(stores: &[Store], statuses: &[OrderStatus]) -> S
                         {store_options}
                     </select>
                 </label>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Customer Email
-                    <input name="customer_email" type="email" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </label>
+                <div class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Order Source
+                    <div class="mt-2 flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
+                        <label class="inline-flex items-center gap-2">
+                            <input type="radio" name="mode" value="new" checked />
+                            New cart
+                        </label>
+                        <label class="inline-flex items-center gap-2">
+                            <input type="radio" name="mode" value="existing" />
+                            Existing cart
+                        </label>
+                    </div>
+                </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Customer Name
-                    <input name="customer_name" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </label>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Total Amount
-                    <input name="total_amount" type="number" step="0.01" min="0" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </label>
+
+            <div class="space-y-4" data-order-mode="new">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Customer Email
+                        <input name="customer_email" type="email" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Customer Name
+                        <input name="customer_name" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </label>
+                </div>
+
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Cart Items</h4>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Select products and quantities for the new cart.</p>
+                    </div>
+                    <button type="button" data-add-order-item class="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors">Add item</button>
+                </div>
+
+                <div class="space-y-3" data-order-items>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end" data-order-item>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Product
+                            <select name="item_product_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">Select product</option>
+                                {product_options}
+                            </select>
+                        </label>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Quantity
+                            <input name="item_quantity" type="number" min="1" value="1" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </label>
+                        <button type="button" data-remove-order-item class="px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-dark-border rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">Remove</button>
+                    </div>
+                </div>
+
+                <template data-order-item-template>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end" data-order-item>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Product
+                            <select name="item_product_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">Select product</option>
+                                {product_options}
+                            </select>
+                        </label>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Quantity
+                            <input name="item_quantity" type="number" min="1" value="1" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </label>
+                        <button type="button" data-remove-order-item class="px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-dark-border rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">Remove</button>
+                    </div>
+                </template>
+            </div>
+
+            <div class="space-y-4 hidden" data-order-mode="existing">
+                <p class="text-sm text-gray-500 dark:text-gray-400">Lookup an existing cart by ID or customer name. The order will use the cart totals.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Cart ID
+                        <input name="existing_cart_id" placeholder="UUID" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Customer Name
+                        <input name="existing_customer_name" placeholder="Search by name" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </label>
+                </div>
             </div>
             <div class="text-right">
                 <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Save</button>
@@ -2106,7 +2764,7 @@ fn render_order_modal_templates(stores: &[Store], statuses: &[OrderStatus]) -> S
         </form>
     </template>
     <template id="modal-order-edit-template">
-        <form method="post" class="space-y-4">
+        <form method="post" class="space-y-4" data-order-status-form="true">
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Status
                 <select name="new_status_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -2124,11 +2782,17 @@ fn render_order_modal_templates(stores: &[Store], statuses: &[OrderStatus]) -> S
         </form>
     </template>"#,
         store_options = store_options,
-        status_options = status_options
+        status_options = status_options,
+        product_options = product_options
     )
 }
 
-fn render_orders_content(orders: &[Order], stores: &[Store], statuses: &[OrderStatus]) -> String {
+fn render_orders_content(
+    orders: &[Order],
+    stores: &[Store],
+    statuses: &[OrderStatus],
+    products: &[Product],
+) -> String {
     let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
     let header = r#"<div class="flex items-center justify-between mb-4">
             <div>
@@ -2144,12 +2808,18 @@ fn render_orders_content(orders: &[Order], stores: &[Store], statuses: &[OrderSt
         orders
             .iter()
             .map(|order| {
-                let status_badge = match order.status.as_str() {
-                    "pending" => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400">Pending</span>"#,
-                    "confirmed" | "processing" => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Processing</span>"#,
-                    "delivered" => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Delivered</span>"#,
-                    _ => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Unknown</span>"#,
-                };
+                let status_match = statuses.iter().find(|status| {
+                    status.name.eq_ignore_ascii_case(&order.status)
+                        || status.code.eq_ignore_ascii_case(&order.status)
+                });
+                let status_class = status_match
+                    .map(|status| order_status_badge_class(&status.code, &status.name))
+                    .unwrap_or_else(|| order_status_badge_class("", &order.status));
+                let status_badge = format!(
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full {}" data-order-status="true">{}</span>"#,
+                    status_class,
+                    html_escape(&order.status)
+                );
                 let store_name = store_lookup
                     .get(&order.store_id)
                     .map(|s| s.name.as_str())
@@ -2161,7 +2831,7 @@ fn render_orders_content(orders: &[Order], stores: &[Store], statuses: &[OrderSt
                 let payload_attr = html_escape(&payload.to_string());
 
                 format!(
-                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50" data-order-id="{}">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3">{}</td>
                         <td class="px-4 py-3">{}</td>
@@ -2172,6 +2842,7 @@ fn render_orders_content(orders: &[Order], stores: &[Store], statuses: &[OrderSt
                             <button type="button" data-modal-target="order-edit" data-modal-mode="edit" data-modal-action="/admin/orders/{}/status" data-modal-title="Update Status" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                         </td>
                     </tr>"#,
+                    order.id,
                     html_escape(&order.order_number),
                     html_escape(&order.customer_email),
                     html_escape(&order.customer_name),
@@ -2205,8 +2876,26 @@ fn render_orders_content(orders: &[Order], stores: &[Store], statuses: &[OrderSt
         </div>{template}",
         header = header,
         rows = rows,
-        template = render_order_modal_templates(stores, statuses)
+        template = render_order_modal_templates(stores, statuses, products)
     )
+}
+
+fn order_status_badge_class(code: &str, name: &str) -> &'static str {
+    let key = if code.trim().is_empty() { name } else { code };
+    let key = key.trim().to_lowercase();
+    match key.as_str() {
+        "pending" => "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
+        "confirmed" | "processing" | "paid" => {
+            "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+        }
+        "delivered" | "completed" | "fulfilled" | "shipped" => {
+            "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+        }
+        "canceled" | "cancelled" | "failed" | "refunded" => {
+            "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+        }
+        _ => "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400",
+    }
 }
 
 fn render_invoices_content(invoices: &[Invoice]) -> String {

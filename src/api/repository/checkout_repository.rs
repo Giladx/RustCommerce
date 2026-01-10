@@ -32,6 +32,30 @@ pub async fn get_cart(pool: &PgPool, cart_id: Uuid) -> Result<ShoppingCart, sqlx
     .await
 }
 
+pub async fn update_cart_customer(
+    pool: &PgPool,
+    cart_id: Uuid,
+    customer_email: Option<String>,
+    customer_name: Option<String>,
+) -> Result<ShoppingCart, sqlx::Error> {
+    sqlx::query_as!(
+        ShoppingCart,
+        r#"
+        UPDATE shopping_carts
+        SET customer_email = COALESCE($2, customer_email),
+            customer_name = COALESCE($3, customer_name),
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        "#,
+        cart_id,
+        customer_email,
+        customer_name
+    )
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn list_carts(pool: &PgPool, store_id: Uuid) -> Result<Vec<ShoppingCart>, sqlx::Error> {
     sqlx::query_as!(
         ShoppingCart,
@@ -39,6 +63,27 @@ pub async fn list_carts(pool: &PgPool, store_id: Uuid) -> Result<Vec<ShoppingCar
         store_id
     )
     .fetch_all(pool)
+    .await
+}
+
+pub async fn find_cart_by_customer_name(
+    pool: &PgPool,
+    store_id: Uuid,
+    customer_name: &str,
+) -> Result<Option<ShoppingCart>, sqlx::Error> {
+    let pattern = format!("%{}%", customer_name);
+    sqlx::query_as!(
+        ShoppingCart,
+        r#"
+        SELECT * FROM shopping_carts
+        WHERE store_id = $1 AND customer_name ILIKE $2
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+        store_id,
+        pattern
+    )
+    .fetch_optional(pool)
     .await
 }
 
@@ -130,6 +175,83 @@ pub async fn create_order(
     )
     .fetch_one(pool)
     .await
+}
+
+pub async fn create_order_from_cart(
+    pool: &PgPool,
+    cart_id: Uuid,
+    store_id: Uuid,
+    customer_email: String,
+    customer_name: String,
+    total_amount: rust_decimal::Decimal,
+) -> Result<Order, sqlx::Error> {
+    let order_number = format!(
+        "ORD-{}",
+        Uuid::new_v4()
+            .to_string()
+            .split('-')
+            .next()
+            .unwrap()
+            .to_uppercase()
+    );
+
+    let default_status = sqlx::query!(
+        "SELECT id, name FROM order_statuses WHERE is_default = true LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let (status_id, status_name) = if let Some(status) = default_status {
+        (Some(status.id), status.name)
+    } else {
+        let pending = sqlx::query!(
+            "SELECT id, name FROM order_statuses WHERE code = 'pending' LIMIT 1"
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(p) = pending {
+            (Some(p.id), p.name)
+        } else {
+            (None, "pending".to_string())
+        }
+    };
+
+    sqlx::query_as!(
+        Order,
+        r#"
+        INSERT INTO orders
+        (order_number, store_id, cart_id, customer_email, customer_name, status, status_id, payment_status, currency, subtotal, total_amount)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid', 'USD', $8, $8)
+        RETURNING *
+        "#,
+        order_number,
+        store_id,
+        cart_id,
+        customer_email,
+        customer_name,
+        status_name,
+        status_id,
+        total_amount
+    )
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn mark_cart_converted(pool: &PgPool, cart_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE shopping_carts
+        SET status = 'converted',
+            converted_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+        cart_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn get_order(pool: &PgPool, order_id: Uuid) -> Result<Order, sqlx::Error> {

@@ -11,6 +11,7 @@ mod admin;
 mod api;
 mod domain;
 mod infra;
+mod mw;
 mod utils;
 
 #[tokio::main]
@@ -62,6 +63,7 @@ async fn main() {
         .route("/gift-cards", get(api::routes::list_gift_cards_route))
         // Cart Calculations
         .route("/cart/calculate", post(api::routes::calculate_cart))
+        .route_layer(axum::middleware::from_fn(mw::auth::auth_middleware))
         .with_state(pool.clone());
 
     let app = Router::new()
