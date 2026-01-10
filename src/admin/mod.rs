@@ -16,17 +16,30 @@ use crate::{
     api::{
         dto::UpdateProductRequest,
         repository::{
-            category_repository, product_attribute_repository, product_feature_repository,
-            product_repository, store_repository,
+            category_repository, checkout_repository, product_attribute_repository,
+            product_feature_repository, product_repository, store_repository,
         },
     },
     domain::{
+        brand::Brand,
         category::Category,
+        checkout::{CreditSlip, DeliverySlip, GiftCard, Invoice, Order, ShoppingCart},
         product::{Product, ProductAttribute, ProductFeature},
         store::store::Store,
     },
     utils::slugify,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum AdminNav {
+    Dashboard,
+    Stores,
+    Categories,
+    Products,
+    Orders,
+    Settings,
+    Docs,
+}
 
 #[derive(Debug, Default, Deserialize)]
 struct AdminQuery {
@@ -99,23 +112,43 @@ struct FeatureForm {
     value: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BrandForm {
+    name: String,
+    description: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
-        .route("/", get(dashboard))
-        .route("/admin", get(dashboard))
+        .route("/", get(dashboard_page))
+        .route("/admin", get(dashboard_page))
         .route("/admin/docs", get(api_docs))
-        .route("/admin/stores", get(dashboard).post(create_store))
+        // Stores
+        .route("/admin/stores", get(stores_page).post(create_store))
         .route("/admin/stores/:id/update", post(update_store))
         .route("/admin/stores/:id/delete", post(delete_store))
-        .route("/admin/categories", get(dashboard).post(create_category))
+        // Categories
+        .route("/admin/categories", get(categories_page).post(create_category))
         .route("/admin/categories/:id/update", post(update_category))
         .route("/admin/categories/:id/delete", post(delete_category))
-        .route("/admin/products", get(dashboard).post(create_product))
+        // Products
+        .route("/admin/products", get(products_page).post(create_product))
         .route("/admin/products/:id/update", post(update_product))
         .route("/admin/products/:id/delete", post(delete_product))
+        // Brands
+        .route("/admin/brands", get(brands_page).post(create_brand))
+        .route("/admin/brands/:id/delete", post(delete_brand))
+        // Orders
+        .route("/admin/orders", get(orders_page))
+        .route("/admin/invoices", get(invoices_page))
+        .route("/admin/credit-slips", get(credit_slips_page))
+        .route("/admin/delivery-slips", get(delivery_slips_page))
+        .route("/admin/shopping-carts", get(shopping_carts_page))
+        .route("/admin/gift-cards", get(gift_cards_page))
+        // Attributes & Features
         .route(
             "/admin/product-attributes",
-            get(dashboard).post(create_attribute),
+            get(dashboard_page).post(create_attribute),
         )
         .route(
             "/admin/product-attributes/:id/update",
@@ -127,13 +160,13 @@ pub fn router() -> Router {
         )
         .route(
             "/admin/product-features",
-            get(dashboard).post(create_feature),
+            get(dashboard_page).post(create_feature),
         )
         .route("/admin/product-features/:id/update", post(update_feature))
         .route("/admin/product-features/:id/delete", post(delete_feature))
 }
 
-async fn dashboard(
+async fn dashboard_page(
     Query(params): Query<AdminQuery>,
     Extension(pool): Extension<PgPool>,
 ) -> Html<String> {
@@ -200,6 +233,119 @@ async fn dashboard(
             ))
         }
     }
+}
+
+// ===== Individual Page Handlers =====
+
+async fn stores_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Stores,
+        "Stores",
+        "Manage your store configurations",
+        &render_stores_content(&stores),
+    ))
+}
+
+async fn categories_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
+    let categories = category_repository::list_categories(&pool).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Categories,
+        "Categories",
+        "Organize your product catalog",
+        &render_categories_content(&stores, &categories),
+    ))
+}
+
+async fn products_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
+    let categories = category_repository::list_categories(&pool).await.unwrap_or_default();
+    let products = product_repository::list_products(&pool).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Products,
+        "Products",
+        "Manage your product inventory",
+        &render_products_content(&stores, &categories, &products),
+    ))
+}
+
+async fn brands_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let brands = sqlx::query_as::<_, Brand>("SELECT * FROM brands ORDER BY name")
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+    Html(render_page(
+        AdminNav::Products,
+        "Brands",
+        "Manage product brands",
+        &render_brands_content(&brands),
+    ))
+}
+
+async fn orders_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Orders,
+        "Orders",
+        "View and manage customer orders",
+        &render_orders_content(&orders),
+    ))
+}
+
+async fn invoices_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let invoices = checkout_repository::list_invoices(&pool, None).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Orders,
+        "Invoices",
+        "Billing documents and payments",
+        &render_invoices_content(&invoices),
+    ))
+}
+
+async fn credit_slips_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let slips = checkout_repository::list_credit_slips(&pool, None).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Orders,
+        "Credit Slips",
+        "Refunds and credits",
+        &render_credit_slips_content(&slips),
+    ))
+}
+
+async fn delivery_slips_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let slips = checkout_repository::list_delivery_slips(&pool, None).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Orders,
+        "Delivery Slips",
+        "Shipping and delivery tracking",
+        &render_delivery_slips_content(&slips),
+    ))
+}
+
+async fn shopping_carts_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let carts = sqlx::query_as::<_, ShoppingCart>(
+        "SELECT * FROM shopping_carts ORDER BY created_at DESC LIMIT 100"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    Html(render_page(
+        AdminNav::Orders,
+        "Shopping Carts",
+        "Active and abandoned carts",
+        &render_shopping_carts_content(&carts),
+    ))
+}
+
+async fn gift_cards_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let cards = checkout_repository::list_gift_cards(&pool, None).await.unwrap_or_default();
+    Html(render_page(
+        AdminNav::Orders,
+        "Gift Cards",
+        "Manage gift card codes and balances",
+        &render_gift_cards_content(&cards),
+    ))
 }
 
 fn build_selections(
@@ -483,6 +629,56 @@ async fn delete_product(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Html(render_error("Unable to delete product")),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ===== Brand Handlers =====
+
+async fn create_brand(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<BrandForm>,
+) -> impl IntoResponse {
+    let result = sqlx::query(
+        "INSERT INTO brands (name, slug, description) VALUES ($1, $2, $3)"
+    )
+    .bind(&form.name)
+    .bind(&slugify(&form.name))
+    .bind(&form.description)
+    .execute(&pool)
+    .await;
+
+    match result {
+        Ok(_) => Redirect::to("/admin/brands").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create brand: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create brand")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_brand(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let result = sqlx::query("DELETE FROM brands WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await;
+
+    match result {
+        Ok(_) => Redirect::to("/admin/brands").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete brand: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete brand")),
             )
                 .into_response()
         }
@@ -1726,5 +1922,734 @@ fn render_api_docs() -> String {
 </html>
 "###,
         endpoint_rows = endpoint_rows,
+    )
+}
+
+// ===== Multi-Page Layout & Rendering =====
+
+fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>{title} - RustCommerce Admin</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        :root {{
+            font-family: 'Inter', system-ui, sans-serif;
+            --bg: #0f172a;
+            --panel: #ffffff;
+            --accent: #2563eb;
+            --muted: #64748b;
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0;
+            min-height: 100vh;
+            background: #f1f5f9;
+            color: #0f172a;
+        }}
+        a {{ text-decoration: none; color: inherit; }}
+        .app-shell {{
+            display: grid;
+            grid-template-columns: 260px 1fr;
+            min-height: 100vh;
+        }}
+        aside {{
+            background: var(--bg);
+            color: #e2e8f0;
+            padding: 2rem 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+        }}
+        .logo {{
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: 0.05em;
+        }}
+        .nav {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }}
+        .nav-section {{
+            margin-top: 1rem;
+        }}
+        .nav-section-title {{
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #64748b;
+            margin-bottom: 0.5rem;
+            padding: 0 0.8rem;
+        }}
+        .nav a {{
+            padding: 0.6rem 0.8rem;
+            border-radius: 10px;
+            color: #cbd5e1;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+        .nav a:hover {{
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+        }}
+        .nav a.active {{
+            background: rgba(37, 99, 235, 0.2);
+            color: #60a5fa;
+        }}
+        .material-icons {{
+            font-size: 20px;
+        }}
+        main {{
+            padding: 2rem clamp(1rem, 4vw, 3rem);
+            max-width: 1400px;
+        }}
+        header.topbar {{
+            margin-bottom: 2rem;
+        }}
+        .topbar h1 {{ margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); }}
+        .topbar p {{ margin: 0.5rem 0 0; color: var(--muted); }}
+        .panel {{
+            background: var(--panel);
+            border-radius: 18px;
+            padding: 1.5rem;
+            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+            margin-bottom: 1.5rem;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        th {{
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 2px solid #e2e8f0;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+        }}
+        td {{
+            padding: 0.75rem;
+            border-bottom: 1px solid #f1f5f9;
+        }}
+        tr:hover {{
+            background: #f8fafc;
+        }}
+        .actions {{
+            display: flex;
+            gap: 0.5rem;
+        }}
+        button, .btn {{
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            border: none;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }}
+        .btn-primary {{
+            background: var(--accent);
+            color: white;
+        }}
+        .btn-danger {{
+            background: #dc2626;
+            color: white;
+        }}
+        .ghost {{
+            background: transparent;
+            border: 1px solid #e2e8f0;
+            color: var(--muted);
+        }}
+        .badge {{
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }}
+        .badge-green {{ background: #dcfce7; color: #16a34a; }}
+        .badge-orange {{ background: #fed7aa; color: #ea580c; }}
+        .badge-blue {{ background: #dbeafe; color: #2563eb; }}
+        .badge-gray {{ background: #f1f5f9; color: #64748b; }}
+        form {{ display: inline; }}
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <aside>
+            <div class="logo">RustCommerce CMS</div>
+            {nav}
+        </aside>
+        <main>
+            <header class="topbar">
+                <h1>{title}</h1>
+                <p>{subtitle}</p>
+            </header>
+            {content}
+        </main>
+    </div>
+</body>
+</html>"#,
+        title = title,
+        subtitle = subtitle,
+        nav = render_navigation(active_nav),
+        content = content,
+    )
+}
+
+fn render_navigation(active: AdminNav) -> String {
+    let nav_items = [
+        (AdminNav::Dashboard, "dashboard", "Dashboard", "/admin"),
+        (AdminNav::Stores, "store", "Stores", "/admin/stores"),
+        (AdminNav::Categories, "category", "Categories", "/admin/categories"),
+        (AdminNav::Products, "inventory_2", "Products", "/admin/products"),
+        (AdminNav::Products, "sell", "Brands", "/admin/brands"),
+    ];
+
+    let order_items = [
+        ("receipt_long", "Orders", "/admin/orders"),
+        ("description", "Invoices", "/admin/invoices"),
+        ("receipt", "Credit Slips", "/admin/credit-slips"),
+        ("local_shipping", "Delivery Slips", "/admin/delivery-slips"),
+        ("shopping_cart", "Shopping Carts", "/admin/shopping-carts"),
+        ("card_giftcard", "Gift Cards", "/admin/gift-cards"),
+    ];
+
+    let catalog_links = nav_items
+        .iter()
+        .map(|(nav, icon, label, href)| {
+            let active_class = if *nav == active { " active" } else { "" };
+            format!(
+                r#"<a href="{}" class="{}"><span class="material-icons">{}</span>{}</a>"#,
+                href, active_class, icon, label
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n                ");
+
+    let order_links = order_items
+        .iter()
+        .map(|(icon, label, href)| {
+            let active_class = if active == AdminNav::Orders && href.contains(label.split_whitespace().next().unwrap_or("").to_lowercase().as_str()) {
+                " active"
+            } else {
+                ""
+            };
+            format!(
+                r#"<a href="{}" class="{}"><span class="material-icons">{}</span>{}</a>"#,
+                href, active_class, icon, label
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n                ");
+
+    format!(
+        r#"<nav class="nav">
+                {}
+                <div class="nav-section">
+                    <div class="nav-section-title">Orders</div>
+                    {}
+                </div>
+                <div class="nav-section">
+                    <a href="/admin/docs"><span class="material-icons">api</span>API Docs</a>
+                </div>
+            </nav>"#,
+        catalog_links, order_links
+    )
+}
+
+fn render_stores_content(stores: &[Store]) -> String {
+    let rows = if stores.is_empty() {
+        "<tr><td colspan=\"5\">No stores created yet.</td></tr>".to_string()
+    } else {
+        stores
+            .iter()
+            .map(|store| {
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td class="actions">
+                            <form method="post" action="/admin/stores/{}/delete" onsubmit="return confirm('Delete store?');">
+                                <button class="btn-danger" type="submit">Delete</button>
+                            </form>
+                        </td>
+                    </tr>"#,
+                    html_escape(&store.name),
+                    store.domain.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    html_escape(&store.currency),
+                    store.created_at.format("%Y-%m-%d"),
+                    store.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Domain</th>
+                        <th>Currency</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_categories_content(stores: &[Store], categories: &[Category]) -> String {
+    let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
+    
+    let rows = if categories.is_empty() {
+        "<tr><td colspan=\"5\">No categories created yet.</td></tr>".to_string()
+    } else {
+        categories
+            .iter()
+            .map(|cat| {
+                let store_name = store_lookup.get(&cat.store_id).map(|s| s.name.as_str()).unwrap_or("Unknown");
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td class="actions">
+                            <form method="post" action="/admin/categories/{}/delete" onsubmit="return confirm('Delete category?');">
+                                <button class="btn-danger" type="submit">Delete</button>
+                            </form>
+                        </td>
+                    </tr>"#,
+                    html_escape(&cat.name),
+                    html_escape(store_name),
+                    cat.slug,
+                    if cat.is_active { "Active" } else { "Inactive" },
+                    cat.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Store</th>
+                        <th>Slug</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_products_content(stores: &[Store], categories: &[Category], products: &[Product]) -> String {
+    let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
+    let category_lookup: HashMap<Uuid, &Category> = categories.iter().map(|c| (c.id, c)).collect();
+    
+    let rows = if products.is_empty() {
+        "<tr><td colspan=\"6\">No products created yet.</td></tr>".to_string()
+    } else {
+        products
+            .iter()
+            .map(|product| {
+                let store_name = store_lookup.get(&product.store_id).map(|s| s.name.as_str()).unwrap_or("Unknown");
+                let category_name = product.category_id
+                    .and_then(|id| category_lookup.get(&id))
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("—");
+                
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td class="actions">
+                            <form method="post" action="/admin/products/{}/delete" onsubmit="return confirm('Delete product?');">
+                                <button class="btn-danger" type="submit">Delete</button>
+                            </form>
+                        </td>
+                    </tr>"#,
+                    html_escape(&product.title),
+                    html_escape(store_name),
+                    html_escape(category_name),
+                    product.slug,
+                    if product.is_active { "Active" } else { "Inactive" },
+                    product.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Store</th>
+                        <th>Category</th>
+                        <th>Slug</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_brands_content(brands: &[Brand]) -> String {
+    let rows = if brands.is_empty() {
+        "<tr><td colspan=\"4\">No brands created yet.</td></tr>".to_string()
+    } else {
+        brands
+            .iter()
+            .map(|brand| {
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td class="actions">
+                            <form method="post" action="/admin/brands/{}/delete" onsubmit="return confirm('Delete brand?');">
+                                <button class="btn-danger" type="submit">Delete</button>
+                            </form>
+                        </td>
+                    </tr>"#,
+                    html_escape(&brand.name),
+                    brand.slug,
+                    brand.description.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    brand.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Slug</th>
+                        <th>Description</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_orders_content(orders: &[Order]) -> String {
+    let rows = if orders.is_empty() {
+        "<tr><td colspan=\"6\">No orders yet.</td></tr>".to_string()
+    } else {
+        orders
+            .iter()
+            .map(|order| {
+                let status_badge = match order.status.as_str() {
+                    "pending" => r#"<span class="badge badge-orange">Pending</span>"#,
+                    "confirmed" | "processing" => r#"<span class="badge badge-blue">Processing</span>"#,
+                    "delivered" => r#"<span class="badge badge-green">Delivered</span>"#,
+                    _ => r#"<span class="badge badge-gray">Unknown</span>"#,
+                };
+                
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>${}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    html_escape(&order.order_number),
+                    html_escape(&order.customer_email),
+                    html_escape(&order.customer_name),
+                    order.created_at.format("%Y-%m-%d %H:%M"),
+                    order.total_amount,
+                    status_badge
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Order #</th>
+                        <th>Customer Email</th>
+                        <th>Customer Name</th>
+                        <th>Date</th>
+                        <th>Total</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_invoices_content(invoices: &[Invoice]) -> String {
+    let rows = if invoices.is_empty() {
+        "<tr><td colspan=\"5\">No invoices yet.</td></tr>".to_string()
+    } else {
+        invoices
+            .iter()
+            .map(|inv| {
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>${}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    html_escape(&inv.invoice_number),
+                    html_escape(&inv.customer_name),
+                    inv.created_at.format("%Y-%m-%d"),
+                    inv.total_amount,
+                    inv.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Invoice #</th>
+                        <th>Customer</th>
+                        <th>Date</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_credit_slips_content(slips: &[CreditSlip]) -> String {
+    let rows = if slips.is_empty() {
+        "<tr><td colspan=\"4\">No credit slips yet.</td></tr>".to_string()
+    } else {
+        slips
+            .iter()
+            .map(|slip| {
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>${}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    html_escape(&slip.slip_number),
+                    slip.created_at.format("%Y-%m-%d"),
+                    slip.refund_amount,
+                    slip.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Slip #</th>
+                        <th>Date</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_delivery_slips_content(slips: &[DeliverySlip]) -> String {
+    let rows = if slips.is_empty() {
+        "<tr><td colspan=\"5\">No delivery slips yet.</td></tr>".to_string()
+    } else {
+        slips
+            .iter()
+            .map(|slip| {
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    html_escape(&slip.slip_number),
+                    slip.tracking_number.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    slip.carrier.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    slip.created_at.format("%Y-%m-%d"),
+                    slip.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Slip #</th>
+                        <th>Tracking</th>
+                        <th>Carrier</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_shopping_carts_content(carts: &[ShoppingCart]) -> String {
+    let rows = if carts.is_empty() {
+        "<tr><td colspan=\"5\">No shopping carts yet.</td></tr>".to_string()
+    } else {
+        carts
+            .iter()
+            .map(|cart| {
+                format!(
+                    r#"<tr>
+                        <td>{}</td>
+                        <td>{}</td>
+                        <td>${}</td>
+                        <td>{}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    cart.id,
+                    cart.customer_email.as_deref().map(html_escape).unwrap_or_else(|| "Guest".to_string()),
+                    cart.total_amount,
+                    cart.created_at.format("%Y-%m-%d %H:%M"),
+                    cart.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cart ID</th>
+                        <th>Customer</th>
+                        <th>Total</th>
+                        <th>Created</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    )
+}
+
+fn render_gift_cards_content(cards: &[GiftCard]) -> String {
+    let rows = if cards.is_empty() {
+        "<tr><td colspan=\"5\">No gift cards yet.</td></tr>".to_string()
+    } else {
+        cards
+            .iter()
+            .map(|card| {
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td>${}</td>
+                        <td>${}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    html_escape(&card.code),
+                    card.recipient_email.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    card.initial_amount,
+                    card.current_balance,
+                    card.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"<div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Recipient</th>
+                        <th>Initial Amount</th>
+                        <th>Balance</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
     )
 }
