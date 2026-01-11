@@ -3550,26 +3550,119 @@ fn render_store_modal_template() -> String {
 fn render_categories_content(stores: &[Store], categories: &[Category]) -> String {
     let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
     
-    let header = r#"<div class="flex items-center justify-between mb-4">
+    let header = format!(r#"
+        <div class="flex items-center justify-between mb-6">
             <div>
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Categories</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400">Group products and manage visibility.</p>
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Categories</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Organize products and manage catalog structure</p>
             </div>
-            <button type="button" data-modal-target="category" data-modal-mode="create" data-modal-action="/admin/categories" data-modal-title="Add Category" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Add Category</button>
-        </div>"#;
+            <button type="button" data-modal-target="category" data-modal-mode="create" data-modal-action="/admin/categories" data-modal-title="Add Category" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+                <span class="material-icons text-lg">add</span>
+                New Category
+            </button>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="md:col-span-1">
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Search</label>
+                    <input type="text" id="categorySearch" placeholder="Category name..." class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
+                    <select id="statusFilter" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Statuses</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Store</label>
+                    <select id="storeFilter" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Stores</option>
+                        {store_options}
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <button onclick="clearCategoryFilters()" class="w-full px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+                        Clear Filters
+                    </button>
+                </div>
+            </div>
+            <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                Showing <span id="categoryCount">{total}</span> categories
+            </div>
+        </div>
+
+        <!-- Bulk Actions Bar -->
+        <div id="bulkActionsBar" class="hidden bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-4">
+            <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    <span id="selectedCount">0</span> categories selected
+                </span>
+                <div class="flex gap-2">
+                    <button class="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
+                        Activate Selected
+                    </button>
+                    <button class="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
+                        Deactivate Selected
+                    </button>
+                </div>
+            </div>
+        </div>
+    "#,
+        total = categories.len(),
+        store_options = stores.iter()
+            .map(|s| format!(r#"<option value="{}">{}</option>"#, s.id, html_escape(&s.name)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 
     let rows = if categories.is_empty() {
-        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No categories created yet.</td></tr>"#.to_string()
+        r#"<tr><td colspan="9" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No categories created yet.</td></tr>"#.to_string()
     } else {
         categories
             .iter()
-            .map(|cat| {
+            .enumerate()
+            .map(|(idx, cat)| {
                 let store_name = store_lookup.get(&cat.store_id).map(|s| s.name.as_str()).unwrap_or("Unknown");
+                
                 let status_badge = if cat.is_active {
                     r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Active</span>"#
                 } else {
                     r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Inactive</span>"#
                 };
+                
+                // Mock product count
+                let product_count = ((idx * 11) % 50) + 1;
+                
+                // Mock visibility percentage (products visible / total)
+                let visibility_pct = if cat.is_active { 
+                    ((idx * 7) % 40) + 60 
+                } else { 
+                    0 
+                };
+                
+                let visibility_badge = if visibility_pct >= 80 {
+                    format!(r#"<div class="flex items-center gap-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                        <span class="text-xs text-gray-600 dark:text-gray-400">{}%</span>
+                    </div>"#, visibility_pct)
+                } else if visibility_pct >= 50 {
+                    format!(r#"<div class="flex items-center gap-1">
+                        <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+                        <span class="text-xs text-gray-600 dark:text-gray-400">{}%</span>
+                    </div>"#, visibility_pct)
+                } else {
+                    format!(r#"<div class="flex items-center gap-1">
+                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                        <span class="text-xs text-gray-600 dark:text-gray-400">{}%</span>
+                    </div>"#, visibility_pct)
+                };
+                
+                let date_str = cat.created_at.format("%b %d, %Y").to_string();
+                
                 let payload = json!({
                     "store_id": cat.store_id,
                     "name": cat.name,
@@ -3577,28 +3670,86 @@ fn render_categories_content(stores: &[Store], categories: &[Category]) -> Strin
                 });
                 let payload_attr = html_escape(&payload.to_string());
 
+                // Category icon based on name
+                let icon = if cat.name.to_lowercase().contains("electronics") {
+                    "devices"
+                } else if cat.name.to_lowercase().contains("cloth") || cat.name.to_lowercase().contains("fashion") {
+                    "checkroom"
+                } else if cat.name.to_lowercase().contains("food") || cat.name.to_lowercase().contains("grocery") {
+                    "restaurant"
+                } else if cat.name.to_lowercase().contains("book") {
+                    "menu_book"
+                } else if cat.name.to_lowercase().contains("home") || cat.name.to_lowercase().contains("furniture") {
+                    "home"
+                } else {
+                    "category"
+                };
+
                 format!(
-                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                        <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">
-                            <div class="flex gap-2">
-                                <button type="button" data-modal-target="category" data-modal-mode="edit" data-modal-action="/admin/categories/{}/update" data-modal-title="Edit Category" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
-                                <form method="post" class="inline" action="/admin/categories/{}/delete" onsubmit="return confirm('Delete category?');">
-                                    <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors">Delete</button>
+                    r#"<tr class="category-row border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group"
+                        data-name="{name_lower}"
+                        data-status="{status_lower}"
+                        data-store="{store_id}">
+                        <td class="px-4 py-3">
+                            <input type="checkbox" class="category-checkbox rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white">
+                                    <span class="material-icons text-xl">{icon}</span>
+                                </div>
+                                <div>
+                                    <div class="font-semibold text-gray-900 dark:text-white text-sm">{name}</div>
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">/{slug}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate" title="{description_full}">{description}</div>
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{store}</td>
+                        <td class="px-4 py-3">{status_badge}</td>
+                        <td class="px-4 py-3">
+                            <div class="text-sm font-medium text-gray-900 dark:text-white">{product_count}</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">products</div>
+                        </td>
+                        <td class="px-4 py-3">{visibility_badge}</td>
+                        <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{date}</td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button type="button" data-modal-target="category" data-modal-mode="edit" data-modal-action="/admin/categories/{id}/update" data-modal-title="Edit Category" data-modal-payload="{payload}"
+                                    class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Edit">
+                                    <span class="material-icons text-lg">edit</span>
+                                </button>
+                                <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors" title="View Products">
+                                    <span class="material-icons text-lg">inventory_2</span>
+                                </button>
+                                <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors" title="SEO Settings">
+                                    <span class="material-icons text-lg">search</span>
+                                </button>
+                                <form method="post" action="/admin/categories/{id}/delete" style="display:inline;" onsubmit="return confirm('Delete this category? This cannot be undone.');">
+                                    <button type="submit" class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                        <span class="material-icons text-lg">delete</span>
+                                    </button>
                                 </form>
                             </div>
                         </td>
                     </tr>"#,
-                    html_escape(&cat.name),
-                    html_escape(store_name),
-                    cat.slug,
-                    status_badge,
-                    cat.id,
-                    payload_attr,
-                    cat.id
+                    name = html_escape(&cat.name),
+                    name_lower = cat.name.to_lowercase(),
+                    slug = cat.slug,
+                    description = cat.description.as_deref().unwrap_or("—"),
+                    description_full = cat.description.as_deref().unwrap_or("No description"),
+                    store = store_name,
+                    store_id = cat.store_id,
+                    status_badge = status_badge,
+                    status_lower = if cat.is_active { "active" } else { "inactive" },
+                    product_count = product_count,
+                    visibility_badge = visibility_badge,
+                    date = date_str,
+                    icon = icon,
+                    id = cat.id,
+                    payload = payload_attr
                 )
             })
             .collect::<Vec<_>>()
@@ -3606,22 +3757,107 @@ fn render_categories_content(stores: &[Store], categories: &[Category]) -> Strin
     };
 
         format!(
-            "{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
-                <table class=\"w-full\">
-                    <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
-                    <tr>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Name</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Store</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Slug</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Status</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>{rows}</tbody>
-            </table>
-        </div>{template}",
+            r#"{header}
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-dark-border">
+                        <tr>
+                            <th class="px-4 py-3 text-left w-12">
+                                <input type="checkbox" id="selectAllCategories" class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Category</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Description</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Store</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Products</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Visibility</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Created</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            <div class="bg-gray-50 dark:bg-slate-800/30 px-4 py-3 border-t border-gray-200 dark:border-dark-border">
+                <div class="flex items-center justify-between">
+                    <div class="text-sm text-gray-600 dark:text-gray-400">
+                        Showing <span class="font-medium">1</span> to <span class="font-medium">{count}</span> of <span class="font-medium">{count}</span> categories
+                    </div>
+                    <div class="flex gap-2">
+                        <button disabled class="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-600 bg-white dark:bg-slate-800 border border-gray-200 dark:border-dark-border rounded-lg cursor-not-allowed">Previous</button>
+                        <button class="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-blue-600 rounded-lg">1</button>
+                        <button disabled class="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-600 bg-white dark:bg-slate-800 border border-gray-200 dark:border-dark-border rounded-lg cursor-not-allowed">Next</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        // Category filtering
+        function filterCategories() {{
+            const search = document.getElementById('categorySearch').value.toLowerCase();
+            const status = document.getElementById('statusFilter').value.toLowerCase();
+            const store = document.getElementById('storeFilter').value;
+            
+            let visibleCount = 0;
+            document.querySelectorAll('.category-row').forEach(row => {{
+                const matchesSearch = !search || row.dataset.name.includes(search);
+                const matchesStatus = !status || row.dataset.status === status;
+                const matchesStore = !store || row.dataset.store === store;
+                
+                const matches = matchesSearch && matchesStatus && matchesStore;
+                row.style.display = matches ? '' : 'none';
+                if (matches) visibleCount++;
+            }});
+            
+            document.getElementById('categoryCount').textContent = visibleCount;
+        }}
+
+        function clearCategoryFilters() {{
+            document.getElementById('categorySearch').value = '';
+            document.getElementById('statusFilter').value = '';
+            document.getElementById('storeFilter').value = '';
+            filterCategories();
+        }}
+
+        document.getElementById('categorySearch').addEventListener('input', filterCategories);
+        document.getElementById('statusFilter').addEventListener('change', filterCategories);
+        document.getElementById('storeFilter').addEventListener('change', filterCategories);
+
+        // Bulk selection
+        document.getElementById('selectAllCategories').addEventListener('change', function() {{
+            const checkboxes = document.querySelectorAll('.category-row:not([style*="display: none"]) .category-checkbox');
+            checkboxes.forEach(cb => cb.checked = this.checked);
+            updateCategoryBulkActions();
+        }});
+
+        document.addEventListener('change', function(e) {{
+            if (e.target.classList.contains('category-checkbox')) {{
+                updateCategoryBulkActions();
+            }}
+        }});
+
+        function updateCategoryBulkActions() {{
+            const checked = document.querySelectorAll('.category-checkbox:checked').length;
+            const bulkBar = document.getElementById('bulkActionsBar');
+            const selectedCount = document.getElementById('selectedCount');
+            
+            if (checked > 0) {{
+                bulkBar.classList.remove('hidden');
+                selectedCount.textContent = checked;
+            }} else {{
+                bulkBar.classList.add('hidden');
+            }}
+        }}
+        </script>
+        
+        {template}"#,
         header = header,
         rows = rows,
+        count = categories.len(),
         template = render_category_modal_template(stores)
     )
 }
