@@ -185,15 +185,13 @@ struct DeliverySlipForm {
 
 #[derive(Debug, Deserialize)]
 struct GiftCardForm {
-    store_id: Uuid,
-    initial_balance: f64,
-    recipient_email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GiftCardUpdateForm {
+    id: Option<Uuid>,
     code: String,
-    balance: f64,
+    initial_amount: f64,
+    current_balance: f64,
+    recipient_name: Option<String>,
+    recipient_email: Option<String>,
+    status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -268,9 +266,10 @@ pub fn router() -> Router {
         .route("/admin/delivery-slips/:id/delete", post(delete_delivery_slip))
         .route("/admin/shopping-carts", get(shopping_carts_page))
         .route("/admin/shopping-carts/:id/delete", post(delete_shopping_cart))
-        .route("/admin/gift-cards", get(gift_cards_page).post(create_gift_card))
-        .route("/admin/gift-cards/:id/update", post(update_gift_card))
-        .route("/admin/gift-cards/:id/delete", post(delete_gift_card))
+        .route("/admin/gift-cards", get(gift_cards_page))
+        .route("/admin/gift-cards/create", post(create_gift_card))
+        .route("/admin/gift-cards/update", post(update_gift_card))
+        .route("/admin/gift-cards/delete", post(delete_gift_card))
         // Customer Service
         .route("/admin/customer-service/chat", get(customer_service_chat_page).post(send_chat_message))
         .route("/admin/customer-service/order-messages", get(order_messages_page).post(create_order_message))
@@ -312,87 +311,160 @@ pub fn router() -> Router {
 async fn dashboard_page(
     Extension(pool): Extension<PgPool>,
 ) -> Html<String> {
-    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
-    let products = product_repository::list_products(&pool).await.unwrap_or_default();
-    let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
+    // 1. Fetch Key Metrics
+    let total_revenue = sqlx::query!(
+        r#"SELECT SUM(total_amount) as total 
+           FROM orders 
+           WHERE status NOT IN ('cancelled', 'refunded', 'pending')"#
+    )
+    .fetch_one(&pool)
+    .await
+    .map(|r| r.total.unwrap_or_default())
+    .unwrap_or_default();
+
+    let total_orders = sqlx::query!(
+        r#"SELECT COUNT(*) as count FROM orders WHERE status NOT IN ('cancelled', 'refunded', 'pending')"#
+    )
+    .fetch_one(&pool)
+    .await
+    .map(|r| r.count.unwrap_or(0))
+    .unwrap_or(0);
+
+    let avg_order_value = if total_orders > 0 {
+        total_revenue / Decimal::from(total_orders)
+    } else {
+        Decimal::ZERO
+    };
+
     let customers_count = sqlx::query!("SELECT COUNT(*) as count FROM customers")
         .fetch_one(&pool)
         .await
         .map(|r| r.count.unwrap_or(0))
         .unwrap_or(0);
-    
+
+    // 2. Fetch Recent Orders for the list
+    let recent_orders = sqlx::query_as::<_, Order>(
+        "SELECT * FROM orders ORDER BY created_at DESC LIMIT 5"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
     let content = format!(
-        r#"<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-5 border border-gray-200 dark:border-dark-border">
-                <div class="flex items-center justify-between">
+        r#"
+        <!-- Financial Widgets -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white dark:bg-dark-panel rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-dark-border transition-all hover:shadow-md">
+                <div class="flex justify-between items-start">
                     <div>
-                        <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Stores</p>
-                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{}</p>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Revenue</p>
+                        <h3 class="text-2xl font-bold text-gray-900 dark:text-white mt-2">${:.2}</h3>
                     </div>
-                    <span class="material-icons text-blue-500 text-3xl">store</span>
+                    <div class="p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                        <span class="material-icons text-green-600 dark:text-green-400">attach_money</span>
+                    </div>
                 </div>
             </div>
-            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-5 border border-gray-200 dark:border-dark-border">
-                <div class="flex items-center justify-between">
+            
+            <div class="bg-white dark:bg-dark-panel rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-dark-border transition-all hover:shadow-md">
+                <div class="flex justify-between items-start">
                     <div>
-                        <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Customers</p>
-                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{}</p>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Orders</p>
+                        <h3 class="text-2xl font-bold text-gray-900 dark:text-white mt-2">{}</h3>
                     </div>
-                    <span class="material-icons text-green-500 text-3xl">people</span>
+                    <div class="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                        <span class="material-icons text-blue-600 dark:text-blue-400">shopping_bag</span>
+                    </div>
                 </div>
             </div>
-            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-5 border border-gray-200 dark:border-dark-border">
-                <div class="flex items-center justify-between">
+
+            <div class="bg-white dark:bg-dark-panel rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-dark-border transition-all hover:shadow-md">
+                <div class="flex justify-between items-start">
                     <div>
-                        <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Products</p>
-                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{}</p>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Avg. Order Value</p>
+                        <h3 class="text-2xl font-bold text-gray-900 dark:text-white mt-2">${:.2}</h3>
                     </div>
-                    <span class="material-icons text-purple-500 text-3xl">inventory_2</span>
+                    <div class="p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
+                        <span class="material-icons text-purple-600 dark:text-purple-400">analytics</span>
+                    </div>
                 </div>
             </div>
-            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-5 border border-gray-200 dark:border-dark-border">
-                <div class="flex items-center justify-between">
+
+            <div class="bg-white dark:bg-dark-panel rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-dark-border transition-all hover:shadow-md">
+                <div class="flex justify-between items-start">
                     <div>
-                        <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Orders</p>
-                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{}</p>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Customers</p>
+                        <h3 class="text-2xl font-bold text-gray-900 dark:text-white mt-2">{}</h3>
                     </div>
-                    <span class="material-icons text-orange-500 text-3xl">receipt_long</span>
+                    <div class="p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
+                        <span class="material-icons text-orange-600 dark:text-orange-400">group</span>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-6 border border-gray-200 dark:border-dark-border">
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Quick Links</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <a href="/admin/stores" class="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                    <span class="material-icons text-blue-500">store</span>
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Manage Stores</span>
-                </a>
-                <a href="/admin/products" class="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                    <span class="material-icons text-purple-500">inventory_2</span>
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Manage Products</span>
-                </a>
-                <a href="/admin/orders" class="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                    <span class="material-icons text-orange-500">receipt_long</span>
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">View Orders</span>
-                </a>
-                <a href="/admin/docs" class="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                    <span class="material-icons text-gray-500">api</span>
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">API Documentation</span>
-                </a>
+
+        <!-- Recent Activity Section -->
+        <div class="bg-white dark:bg-dark-panel rounded-2xl shadow-sm border border-gray-100 dark:border-dark-border overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-100 dark:border-dark-border flex justify-between items-center">
+                <h3 class="font-semibold text-gray-900 dark:text-white">Recent Orders</h3>
+                <a href="/admin/orders" class="text-sm text-blue-600 dark:text-blue-400 hover:underline">View all</a>
             </div>
-        </div>"#,
-        stores.len(),
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50/50 dark:bg-slate-800/50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Order #</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Customer</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                        {}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        "#,
+        total_revenue,
+        total_orders,
+        avg_order_value,
         customers_count,
-        products.len(),
-        orders.len()
+        render_recent_orders_rows(&recent_orders)
     );
     
     Html(render_page(
         AdminNav::Dashboard,
         "Dashboard",
-        "Overview of your e-commerce platform",
+        "Overview of your store performance",
         &content,
     ))
+}
+
+fn render_recent_orders_rows(orders: &[Order]) -> String {
+    if orders.is_empty() {
+        return r#"<tr><td colspan="5" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400 italic">No recent orders found</td></tr>"#.to_string();
+    }
+
+    orders.iter().map(|o| {
+        let status_class = order_status_badge_class("", &o.status);
+        format!(
+            r#"<tr class="hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">{}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">{}</td>
+                <td class="px-6 py-4 whitespace-nowrap"><span class="px-2.5 py-0.5 rounded-full text-xs font-medium {}">{}</span></td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">${}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{}</td>
+            </tr>"#,
+            html_escape(&o.order_number),
+            html_escape(&o.customer_email),
+            status_class,
+            html_escape(&o.status),
+            o.total_amount,
+            o.created_at.format("%b %d, %Y")
+        )
+    }).collect::<Vec<_>>().join("")
 }
 
 // ===== Individual Page Handlers =====
@@ -975,14 +1047,30 @@ async fn create_gift_card(
     Extension(pool): Extension<PgPool>,
     Form(form): Form<GiftCardForm>,
 ) -> impl IntoResponse {
-    let balance = rust_decimal::Decimal::from_f64(form.initial_balance).unwrap_or_default();
-    match checkout_repository::create_gift_card(
-        &pool,
-        form.store_id,
-        balance,
-        form.recipient_email,
-    )
-    .await
+    let initial_amount = rust_decimal::Decimal::from_f64(form.initial_amount).unwrap_or_default();
+    let current_balance = rust_decimal::Decimal::from_f64(form.current_balance).unwrap_or_default();
+    
+    // Get the default store (or handle multi-store properly)
+    let store_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM stores LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(Uuid::nil());
+    
+    let query = r#"
+        INSERT INTO gift_cards (store_id, code, initial_amount, current_balance, currency, status, recipient_name, recipient_email)
+        VALUES ($1, $2, $3, $4, 'USD', $5, $6, $7)
+    "#;
+    
+    match sqlx::query(query)
+        .bind(store_id)
+        .bind(&form.code)
+        .bind(initial_amount)
+        .bind(current_balance)
+        .bind(&form.status)
+        .bind(optional_text(form.recipient_name))
+        .bind(optional_text(form.recipient_email))
+        .execute(&pool)
+        .await
     {
         Ok(_) => Redirect::to("/admin/gift-cards").into_response(),
         Err(err) => {
@@ -998,14 +1086,26 @@ async fn create_gift_card(
 
 async fn update_gift_card(
     Extension(pool): Extension<PgPool>,
-    Path(id): Path<Uuid>,
-    Form(form): Form<GiftCardUpdateForm>,
+    Form(form): Form<GiftCardForm>,
 ) -> impl IntoResponse {
-    let balance = rust_decimal::Decimal::from_f64(form.balance).unwrap_or_default();
-    let query = "UPDATE gift_cards SET code = $1, current_balance = $2 WHERE id = $3";
+    let id = form.id.unwrap_or(Uuid::nil());
+    let initial_amount = rust_decimal::Decimal::from_f64(form.initial_amount).unwrap_or_default();
+    let current_balance = rust_decimal::Decimal::from_f64(form.current_balance).unwrap_or_default();
+    
+    let query = r#"
+        UPDATE gift_cards 
+        SET code = $1, initial_amount = $2, current_balance = $3, status = $4, 
+            recipient_name = $5, recipient_email = $6
+        WHERE id = $7
+    "#;
+    
     match sqlx::query(query)
         .bind(&form.code)
-        .bind(balance)
+        .bind(initial_amount)
+        .bind(current_balance)
+        .bind(&form.status)
+        .bind(optional_text(form.recipient_name))
+        .bind(optional_text(form.recipient_email))
         .bind(id)
         .execute(&pool)
         .await
@@ -1024,8 +1124,10 @@ async fn update_gift_card(
 
 async fn delete_gift_card(
     Extension(pool): Extension<PgPool>,
-    Path(id): Path<Uuid>,
+    Form(form): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let id = form.get("id").and_then(|s| Uuid::parse_str(s).ok()).unwrap_or(Uuid::nil());
+    
     match sqlx::query("DELETE FROM gift_cards WHERE id = $1")
         .bind(id)
         .execute(&pool)
@@ -4277,24 +4379,58 @@ fn render_shopping_carts_content(carts: &[ShoppingCart]) -> String {
 
 fn render_gift_cards_content(cards: &[GiftCard], _stores: &[Store]) -> String {
     let rows = if cards.is_empty() {
-        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No gift cards yet.</td></tr>"#.to_string()
+        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No gift cards yet.</td></tr>"#.to_string()
     } else {
         cards
             .iter()
             .map(|card| {
+                let status_badge = match card.status.as_str() {
+                    "active" => r#"<span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400">Active</span>"#,
+                    "redeemed" => r#"<span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-400">Redeemed</span>"#,
+                    "expired" => r#"<span class="px-2 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400">Expired</span>"#,
+                    _ => r#"<span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-400">Unknown</span>"#,
+                };
+                
+                let edit_payload = serde_json::json!({
+                    "id": card.id,
+                    "code": card.code,
+                    "initial_amount": card.initial_amount.to_string(),
+                    "current_balance": card.current_balance.to_string(),
+                    "recipient_email": card.recipient_email.as_deref().unwrap_or(""),
+                    "recipient_name": card.recipient_name.as_deref().unwrap_or(""),
+                    "status": card.status
+                });
+                
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
                         <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-2">
+                                <button data-modal-target="giftCardModal" data-modal-mode="edit" data-modal-action="/admin/gift-cards/update" data-modal-payload='{}' class="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
+                                    <span class="material-icons text-sm">edit</span>
+                                </button>
+                                <form method="POST" action="/admin/gift-cards/delete" class="inline" onsubmit="return confirm('Delete this gift card?');">
+                                    <input type="hidden" name="id" value="{}" />
+                                    <button type="submit" class="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
+                                        <span class="material-icons text-sm">delete</span>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
                     </tr>"#,
                     html_escape(&card.code),
+                    card.recipient_name.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
                     card.recipient_email.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
                     card.initial_amount,
                     card.current_balance,
-                    card.status
+                    status_badge,
+                    serde_json::to_string(&edit_payload).unwrap_or_default().replace('"', "&quot;"),
+                    card.id
                 )
             })
             .collect::<Vec<_>>()
@@ -4303,19 +4439,121 @@ fn render_gift_cards_content(cards: &[GiftCard], _stores: &[Store]) -> String {
 
     format!(
         r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Gift Cards</h2>
+                <button data-modal-target="giftCardModal" data-modal-mode="create" data-modal-action="/admin/gift-cards/create" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+                    <span class="material-icons text-sm">add</span>
+                    New Gift Card
+                </button>
+            </div>
             <table class="w-full">
                 <thead class="bg-gray-50 dark:bg-slate-800/50">
                     <tr>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Code</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Recipient</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Recipient Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Recipient Email</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Initial Amount</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Balance</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
                     </tr>
                 </thead>
                 <tbody>{}</tbody>
             </table>
-        </div>"#,
+        </div>
+        
+        <!-- Gift Card Modal -->
+        <div id="giftCardModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div class="bg-white dark:bg-dark-panel rounded-lg max-w-lg w-full shadow-xl">
+                <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex justify-between items-center">
+                    <h3 id="modalTitle" class="text-lg font-semibold text-gray-900 dark:text-white">New Gift Card</h3>
+                    <button onclick="document.getElementById('giftCardModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                        <span class="material-icons">close</span>
+                    </button>
+                </div>
+                <form id="giftCardForm" method="POST" class="px-6 py-4 space-y-4">
+                    <input type="hidden" name="id" id="cardId" />
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Code</label>
+                        <input type="text" name="code" id="cardCode" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="GIFT-XXXXX" />
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Initial Amount</label>
+                            <input type="number" name="initial_amount" id="cardInitialAmount" step="0.01" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="100.00" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Current Balance</label>
+                            <input type="number" name="current_balance" id="cardBalance" step="0.01" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="100.00" />
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Recipient Name</label>
+                        <input type="text" name="recipient_name" id="cardRecipientName" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Optional" />
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Recipient Email</label>
+                        <input type="email" name="recipient_email" id="cardRecipientEmail" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Optional" />
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
+                        <select name="status" id="cardStatus" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="active">Active</option>
+                            <option value="redeemed">Redeemed</option>
+                            <option value="expired">Expired</option>
+                        </select>
+                    </div>
+                    
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button type="button" onclick="document.getElementById('giftCardModal').classList.add('hidden')" class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                            Save Gift Card
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <script>
+        document.querySelectorAll('[data-modal-target="giftCardModal"]').forEach(btn => {{
+            btn.addEventListener('click', () => {{
+                const modal = document.getElementById('giftCardModal');
+                const form = document.getElementById('giftCardForm');
+                const title = document.getElementById('modalTitle');
+                const mode = btn.dataset.modalMode;
+                const action = btn.dataset.modalAction;
+                
+                form.action = action;
+                
+                if (mode === 'create') {{
+                    title.textContent = 'New Gift Card';
+                    form.reset();
+                    document.getElementById('cardId').value = '';
+                    document.getElementById('cardBalance').value = '';
+                }} else if (mode === 'edit') {{
+                    title.textContent = 'Edit Gift Card';
+                    const data = JSON.parse(btn.dataset.modalPayload);
+                    document.getElementById('cardId').value = data.id;
+                    document.getElementById('cardCode').value = data.code;
+                    document.getElementById('cardInitialAmount').value = data.initial_amount;
+                    document.getElementById('cardBalance').value = data.current_balance;
+                    document.getElementById('cardRecipientName').value = data.recipient_name || '';
+                    document.getElementById('cardRecipientEmail').value = data.recipient_email || '';
+                    document.getElementById('cardStatus').value = data.status;
+                }}
+                
+                modal.classList.remove('hidden');
+            }});
+        }});
+        </script>"#,
         rows
     )
 }
