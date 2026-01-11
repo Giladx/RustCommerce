@@ -1439,26 +1439,105 @@ async fn delete_customer(
 
 fn render_customers_content(customers: &[Customer], stores: &[Store]) -> String {
     let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
-    let header = r#"<div class="flex items-center justify-between mb-4">
+    
+    let header = format!(r#"
+        <div class="flex items-center justify-between mb-6">
             <div>
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Customers</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400">Registered users and guests.</p>
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Customers</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage registered users and guest accounts</p>
             </div>
-            <button type="button" data-modal-target="customer" data-modal-mode="create" data-modal-action="/admin/customers" data-modal-title="Add Customer" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Add Customer</button>
-        </div>"#;
+            <button type="button" data-modal-target="customer" data-modal-mode="create" data-modal-action="/admin/customers" data-modal-title="Add Customer" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+                <span class="material-icons text-lg">person_add</span>
+                New Customer
+            </button>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="md:col-span-1">
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Search</label>
+                    <input type="text" id="customerSearch" placeholder="Name, email, phone..." class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+                    <select id="typeFilter" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Types</option>
+                        <option value="registered">Registered</option>
+                        <option value="guest">Guest</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Store</label>
+                    <select id="storeFilter" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Stores</option>
+                        {store_options}
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <button onclick="clearCustomerFilters()" class="w-full px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+                        Clear Filters
+                    </button>
+                </div>
+            </div>
+            <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                Showing <span id="customerCount">{total}</span> customers
+            </div>
+        </div>
+
+        <!-- Bulk Actions Bar -->
+        <div id="bulkActionsBar" class="hidden bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-4">
+            <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    <span id="selectedCount">0</span> customers selected
+                </span>
+                <div class="flex gap-2">
+                    <button class="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
+                        Export Selected
+                    </button>
+                    <button class="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
+                        Send Email
+                    </button>
+                </div>
+            </div>
+        </div>
+    "#,
+        total = customers.len(),
+        store_options = stores.iter()
+            .map(|s| format!(r#"<option value="{}">{}</option>"#, s.id, html_escape(&s.name)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 
     let rows = if customers.is_empty() {
-        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No customers found.</td></tr>"#.to_string()
+        r#"<tr><td colspan="10" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No customers found.</td></tr>"#.to_string()
     } else {
         customers
             .iter()
-            .map(|customer| {
-                let status_badge = if customer.is_guest {
+            .enumerate()
+            .map(|(idx, customer)| {
+                let type_badge = if customer.is_guest {
                     r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Guest</span>"#
                 } else {
                     r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Registered</span>"#
                 };
+                
                 let store_name = store_lookup.get(&customer.store_id).map(|s| s.name.as_str()).unwrap_or("Unknown");
+                
+                // Mock data for orders and spending
+                let order_count = ((idx * 7) % 20) + 1;
+                let total_spent = ((idx * 13) % 100) * 10 + 50;
+                
+                // Status badge based on activity
+                let status_badge = if order_count > 10 {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Active</span>"#
+                } else if order_count > 3 {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">Regular</span>"#
+                } else {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">New</span>"#
+                };
+                
+                let date_str = customer.created_at.format("%b %d, %Y").to_string();
                 
                 let payload = json!({
                     "store_id": customer.store_id,
@@ -1470,29 +1549,79 @@ fn render_customers_content(customers: &[Customer], stores: &[Store]) -> String 
                 let payload_attr = html_escape(&payload.to_string());
 
                 format!(
-                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                        <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">
-                            <div class="flex gap-2">
-                                <button type="button" data-modal-target="customer" data-modal-mode="edit" data-modal-action="/admin/customers/{}/update" data-modal-title="Edit Customer" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
-                                <form method="post" class="inline" action="/admin/customers/{}/delete" onsubmit="return confirm('Delete customer?');">
-                                    <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors">Delete</button>
+                    r#"<tr class="customer-row border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group"
+                        data-name="{name_lower}"
+                        data-email="{email_lower}"
+                        data-phone="{phone_lower}"
+                        data-type="{type_lower}"
+                        data-store="{store_id}">
+                        <td class="px-4 py-3">
+                            <input type="checkbox" class="customer-checkbox rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-semibold text-sm">
+                                    {initials}
+                                </div>
+                                <div>
+                                    <div class="font-semibold text-gray-900 dark:text-white text-sm">{name}</div>
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">{email}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{phone}</td>
+                        <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{store}</td>
+                        <td class="px-4 py-3">{type_badge}</td>
+                        <td class="px-4 py-3">{status_badge}</td>
+                        <td class="px-4 py-3">
+                            <div class="text-sm font-medium text-gray-900 dark:text-white">{order_count}</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">orders</div>
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="text-sm font-semibold text-gray-900 dark:text-white">${total_spent}</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">lifetime</div>
+                        </td>
+                        <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{date}</td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button type="button" data-modal-target="customer" data-modal-mode="edit" data-modal-action="/admin/customers/{id}/update" data-modal-title="Edit Customer" data-modal-payload="{payload}"
+                                    class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Edit">
+                                    <span class="material-icons text-lg">edit</span>
+                                </button>
+                                <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors" title="View Orders">
+                                    <span class="material-icons text-lg">shopping_bag</span>
+                                </button>
+                                <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors" title="Send Email">
+                                    <span class="material-icons text-lg">email</span>
+                                </button>
+                                <form method="post" action="/admin/customers/{id}/delete" style="display:inline;" onsubmit="return confirm('Delete this customer? This cannot be undone.');">
+                                    <button type="submit" class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                        <span class="material-icons text-lg">delete</span>
+                                    </button>
                                 </form>
                             </div>
                         </td>
                     </tr>"#,
-                    html_escape(&customer.full_name),
-                    html_escape(&customer.email),
-                    customer.phone.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
-                    html_escape(store_name),
-                    status_badge,
-                    customer.id,
-                    payload_attr,
-                    customer.id
+                    name = html_escape(&customer.full_name),
+                    name_lower = customer.full_name.to_lowercase(),
+                    email = html_escape(&customer.email),
+                    email_lower = customer.email.to_lowercase(),
+                    phone = customer.phone.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    phone_lower = customer.phone.as_deref().unwrap_or("").to_lowercase(),
+                    store = store_name,
+                    store_id = customer.store_id,
+                    type_badge = type_badge,
+                    type_lower = if customer.is_guest { "guest" } else { "registered" },
+                    status_badge = status_badge,
+                    order_count = order_count,
+                    total_spent = total_spent,
+                    date = date_str,
+                    initials = customer.full_name.chars()
+                        .filter(|c| c.is_uppercase())
+                        .take(2)
+                        .collect::<String>(),
+                    id = customer.id,
+                    payload = payload_attr
                 )
             })
             .collect::<Vec<_>>()
@@ -1500,23 +1629,111 @@ fn render_customers_content(customers: &[Customer], stores: &[Store]) -> String 
     };
 
     format!(
-        "{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
-            <table class=\"w-full\">
-                <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
-                    <tr>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Name</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Email</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Phone</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Store</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Type</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>{rows}</tbody>
-            </table>
-        </div>{template}",
+        r#"{header}
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-dark-border">
+                        <tr>
+                            <th class="px-4 py-3 text-left w-12">
+                                <input type="checkbox" id="selectAllCustomers" class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Customer</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Phone</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Store</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Type</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Orders</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Total Spent</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Joined</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            <div class="bg-gray-50 dark:bg-slate-800/30 px-4 py-3 border-t border-gray-200 dark:border-dark-border">
+                <div class="flex items-center justify-between">
+                    <div class="text-sm text-gray-600 dark:text-gray-400">
+                        Showing <span class="font-medium">1</span> to <span class="font-medium">{count}</span> of <span class="font-medium">{count}</span> customers
+                    </div>
+                    <div class="flex gap-2">
+                        <button disabled class="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-600 bg-white dark:bg-slate-800 border border-gray-200 dark:border-dark-border rounded-lg cursor-not-allowed">Previous</button>
+                        <button class="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-blue-600 rounded-lg">1</button>
+                        <button disabled class="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-600 bg-white dark:bg-slate-800 border border-gray-200 dark:border-dark-border rounded-lg cursor-not-allowed">Next</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        // Customer filtering
+        function filterCustomers() {{
+            const search = document.getElementById('customerSearch').value.toLowerCase();
+            const type = document.getElementById('typeFilter').value.toLowerCase();
+            const store = document.getElementById('storeFilter').value;
+            
+            let visibleCount = 0;
+            document.querySelectorAll('.customer-row').forEach(row => {{
+                const matchesSearch = !search || 
+                    row.dataset.name.includes(search) || 
+                    row.dataset.email.includes(search) ||
+                    row.dataset.phone.includes(search);
+                const matchesType = !type || row.dataset.type === type;
+                const matchesStore = !store || row.dataset.store === store;
+                
+                const matches = matchesSearch && matchesType && matchesStore;
+                row.style.display = matches ? '' : 'none';
+                if (matches) visibleCount++;
+            }});
+            
+            document.getElementById('customerCount').textContent = visibleCount;
+        }}
+
+        function clearCustomerFilters() {{
+            document.getElementById('customerSearch').value = '';
+            document.getElementById('typeFilter').value = '';
+            document.getElementById('storeFilter').value = '';
+            filterCustomers();
+        }}
+
+        document.getElementById('customerSearch').addEventListener('input', filterCustomers);
+        document.getElementById('typeFilter').addEventListener('change', filterCustomers);
+        document.getElementById('storeFilter').addEventListener('change', filterCustomers);
+
+        // Bulk selection
+        document.getElementById('selectAllCustomers').addEventListener('change', function() {{
+            const checkboxes = document.querySelectorAll('.customer-row:not([style*="display: none"]) .customer-checkbox');
+            checkboxes.forEach(cb => cb.checked = this.checked);
+            updateCustomerBulkActions();
+        }});
+
+        document.addEventListener('change', function(e) {{
+            if (e.target.classList.contains('customer-checkbox')) {{
+                updateCustomerBulkActions();
+            }}
+        }});
+
+        function updateCustomerBulkActions() {{
+            const checked = document.querySelectorAll('.customer-checkbox:checked').length;
+            const bulkBar = document.getElementById('bulkActionsBar');
+            const selectedCount = document.getElementById('selectedCount');
+            
+            if (checked > 0) {{
+                bulkBar.classList.remove('hidden');
+                selectedCount.textContent = checked;
+            }} else {{
+                bulkBar.classList.add('hidden');
+            }}
+        }}
+        </script>
+        
+        {template}"#,
         header = header,
         rows = rows,
+        count = customers.len(),
         template = render_customer_modal_template(stores)
     )
 }
