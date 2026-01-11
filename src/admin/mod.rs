@@ -3398,25 +3398,162 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
     let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
     let category_lookup: HashMap<Uuid, &Category> = categories.iter().map(|c| (c.id, c)).collect();
     
-    let header = r#"<div class="flex items-center justify-between mb-4">
-            <div>
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Products</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400">Add and update catalog items.</p>
+    let header = r#"<div class="mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-900 dark:text-white">Product Catalog</h2>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage inventory, pricing, and product information</p>
+                </div>
+                <div class="flex gap-3">
+                    <button type="button" class="px-4 py-2 rounded-lg bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 text-sm font-medium hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-2">
+                        <span class="material-icons text-sm">file_download</span>
+                        Export CSV
+                    </button>
+                    <button type="button" class="px-4 py-2 rounded-lg bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 text-sm font-medium hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-2">
+                        <span class="material-icons text-sm">file_upload</span>
+                        Import
+                    </button>
+                    <button type="button" data-modal-target="product" data-modal-mode="create" data-modal-action="/admin/products" data-modal-title="Add Product" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+                        <span class="material-icons text-sm">add</span>
+                        New Product
+                    </button>
+                </div>
             </div>
-            <button type="button" data-modal-target="product" data-modal-mode="create" data-modal-action="/admin/products" data-modal-title="Add Product" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Add Product</button>
+            
+            <!-- Filters and Bulk Actions -->
+            <div class="bg-white dark:bg-dark-panel rounded-lg border border-gray-200 dark:border-dark-border p-4 mb-4">
+                <div class="flex flex-wrap gap-4 items-end">
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Search</label>
+                        <div class="relative">
+                            <input type="text" id="productSearch" placeholder="Product name, SKU, or description..." class="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <span class="material-icons absolute left-2.5 top-2 text-gray-400 text-sm">search</span>
+                        </div>
+                    </div>
+                    
+                    <div class="w-48">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Category</label>
+                        <select id="categoryFilter" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="">All Categories</option>
+                            <option value="uncategorized">Uncategorized</option>
+                        </select>
+                    </div>
+                    
+                    <div class="w-40">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Status</label>
+                        <select id="statusFilter" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="">All Status</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </div>
+                    
+                    <div class="w-40">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Stock</label>
+                        <select id="stockFilter" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="">All Stock</option>
+                            <option value="in-stock">In Stock</option>
+                            <option value="low-stock">Low Stock</option>
+                            <option value="out-of-stock">Out of Stock</option>
+                        </select>
+                    </div>
+                    
+                    <button type="button" class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+                        Clear Filters
+                    </button>
+                </div>
+                
+                <!-- Bulk Actions Bar -->
+                <div id="bulkActionsBar" class="hidden mt-4 pt-4 border-t border-gray-200 dark:border-dark-border">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-600 dark:text-gray-400">
+                            <span id="selectedCount">0</span> items selected
+                        </span>
+                        <div class="flex gap-2">
+                            <button type="button" class="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                                Activate
+                            </button>
+                            <button type="button" class="px-3 py-1.5 text-xs font-medium bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors">
+                                Deactivate
+                            </button>
+                            <button type="button" class="px-3 py-1.5 text-xs font-medium bg-orange-600 text-white rounded hover:bg-orange-700 transition-colors">
+                                Edit Category
+                            </button>
+                            <button type="button" class="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 transition-colors">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>"#;
 
     let rows = if products.is_empty() {
-        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No products created yet.</td></tr>"#.to_string()
+        r#"<tr class="border-b border-gray-200 dark:border-dark-border"><td colspan="11" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
+            <div class="flex flex-col items-center">
+                <span class="material-icons text-6xl text-gray-300 dark:text-gray-600 mb-3">inventory_2</span>
+                <p class="text-base font-medium mb-1">No products yet</p>
+                <p class="text-sm">Create your first product to get started</p>
+            </div>
+        </td></tr>"#.to_string()
     } else {
         products
             .iter()
-            .map(|product| {
+            .enumerate()
+            .map(|(idx, product)| {
                 let store_name = store_lookup.get(&product.store_id).map(|s| s.name.as_str()).unwrap_or("Unknown");
                 let category_name = product.category_id
                     .and_then(|id| category_lookup.get(&id))
                     .map(|c| c.name.as_str())
                     .unwrap_or("—");
+                
+                // Mock data for enterprise features (to be implemented in backend)
+                let sku = format!("SKU-{}", &product.slug.to_uppercase().chars().take(8).collect::<String>());
+                let price = 99.99 + (idx as f64 * 10.0);
+                let stock = if idx % 5 == 0 { 0 } else if idx % 3 == 0 { 5 } else { 150 - (idx * 10) };
+                let views = 1250 - (idx * 100);
+                let seo_score = 70 + (idx % 30);
+                
+                let status_badge = if product.is_active {
+                    r#"<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400">
+                        <span class="w-1.5 h-1.5 bg-green-500 rounded-full mr-1.5"></span>
+                        Active
+                    </span>"#
+                } else {
+                    r#"<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-400">
+                        <span class="w-1.5 h-1.5 bg-gray-400 rounded-full mr-1.5"></span>
+                        Inactive
+                    </span>"#
+                };
+                
+                let stock_badge = if stock == 0 {
+                    r#"<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400">Out of Stock</span>"#.to_string()
+                } else if stock < 20 {
+                    format!(r#"<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400">Low ({} left)</span>"#, stock)
+                } else {
+                    format!(r#"<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400">{} units</span>"#, stock)
+                };
+                
+                let seo_indicator = if seo_score >= 80 {
+                    r#"<div class="flex items-center gap-1" title="SEO Score: Good">
+                        <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                        <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                        <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                    </div>"#
+                } else if seo_score >= 50 {
+                    r#"<div class="flex items-center gap-1" title="SEO Score: Fair">
+                        <span class="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                        <span class="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                        <span class="w-2 h-2 bg-gray-300 dark:bg-gray-600 rounded-full"></span>
+                    </div>"#
+                } else {
+                    r#"<div class="flex items-center gap-1" title="SEO Score: Needs Work">
+                        <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                        <span class="w-2 h-2 bg-gray-300 dark:bg-gray-600 rounded-full"></span>
+                        <span class="w-2 h-2 bg-gray-300 dark:bg-gray-600 rounded-full"></span>
+                    </div>"#
+                };
+                
                 let payload = json!({
                     "store_id": product.store_id,
                     "category_id": product.category_id,
@@ -3427,26 +3564,61 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                 let payload_attr = html_escape(&payload.to_string());
                 
                 format!(
-                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                        <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">
-                            <div class="flex gap-2">
-                                <button type="button" data-modal-target="product" data-modal-mode="edit" data-modal-action="/admin/products/{}/update" data-modal-title="Edit Product" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
-                                <form method="post" class="inline" action="/admin/products/{}/delete" onsubmit="return confirm('Delete product?');">
-                                    <button class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors" type="submit">Delete</button>
+                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group">
+                        <td class="px-3 py-2">
+                            <input type="checkbox" class="product-checkbox w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" data-id="{}">
+                        </td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0">
+                                    <span class="material-icons text-gray-400 text-lg">image</span>
+                                </div>
+                                <div class="min-w-0">
+                                    <div class="font-medium text-gray-900 dark:text-white text-sm truncate">{}</div>
+                                    <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">{}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{}</td>
+                        <td class="px-3 py-2">
+                            <div class="text-sm font-medium text-gray-900 dark:text-white">${:.2}</div>
+                        </td>
+                        <td class="px-3 py-2">{}</td>
+                        <td class="px-3 py-2">{}</td>
+                        <td class="px-3 py-2">
+                            <div class="text-xs text-gray-600 dark:text-gray-400">{} views</div>
+                        </td>
+                        <td class="px-3 py-2">{}</td>
+                        <td class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{}</td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button type="button" data-modal-target="product" data-modal-mode="edit" data-modal-action="/admin/products/{}/update" data-modal-title="Edit Product" data-modal-payload="{}" class="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Edit">
+                                    <span class="material-icons text-sm">edit</span>
+                                </button>
+                                <button type="button" class="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Duplicate">
+                                    <span class="material-icons text-sm">content_copy</span>
+                                </button>
+                                <button type="button" class="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="View Analytics">
+                                    <span class="material-icons text-sm">analytics</span>
+                                </button>
+                                <form method="post" class="inline" action="/admin/products/{}/delete" onsubmit="return confirm('Delete this product?');">
+                                    <button type="submit" class="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                        <span class="material-icons text-sm">delete</span>
+                                    </button>
                                 </form>
                             </div>
                         </td>
                     </tr>"#,
+                    product.id,
                     html_escape(&product.title),
-                    html_escape(store_name),
+                    sku,
                     html_escape(category_name),
-                    product.slug,
-                    if product.is_active { "Active" } else { "Inactive" },
+                    price,
+                    stock_badge,
+                    status_badge,
+                    views,
+                    seo_indicator,
+                    product.created_at.format("%Y-%m-%d").to_string(),
                     product.id,
                     payload_attr,
                     product.id
@@ -3457,21 +3629,107 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
     };
 
     format!(
-        "{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
-            <table class=\"w-full\">
-                <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
-                    <tr>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Product</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Store</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Category</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Slug</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Status</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>{rows}</tbody>
-            </table>
-        </div>{template}",
+        r#"{header}
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-dark-border">
+                        <tr>
+                            <th class="px-3 py-3 text-left w-10">
+                                <input type="checkbox" id="selectAll" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                            </th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-900 dark:hover:text-white">
+                                <div class="flex items-center gap-1">
+                                    Product
+                                    <span class="material-icons text-xs">unfold_more</span>
+                                </div>
+                            </th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-900 dark:hover:text-white">
+                                <div class="flex items-center gap-1">
+                                    Category
+                                    <span class="material-icons text-xs">unfold_more</span>
+                                </div>
+                            </th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-900 dark:hover:text-white">
+                                <div class="flex items-center gap-1">
+                                    Price
+                                    <span class="material-icons text-xs">unfold_more</span>
+                                </div>
+                            </th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-900 dark:hover:text-white">
+                                <div class="flex items-center gap-1">
+                                    Stock
+                                    <span class="material-icons text-xs">unfold_more</span>
+                                </div>
+                            </th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-900 dark:hover:text-white">
+                                <div class="flex items-center gap-1">
+                                    Views
+                                    <span class="material-icons text-xs">unfold_more</span>
+                                </div>
+                            </th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">SEO</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Created</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            <div class="px-4 py-3 bg-gray-50 dark:bg-slate-800/50 border-t border-gray-200 dark:border-dark-border">
+                <div class="flex items-center justify-between">
+                    <div class="text-sm text-gray-600 dark:text-gray-400">
+                        Showing <span class="font-medium">{}</span> products
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="px-3 py-1.5 text-sm border border-gray-300 dark:border-dark-border rounded hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50" disabled>
+                            Previous
+                        </button>
+                        <button class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                            1
+                        </button>
+                        <button class="px-3 py-1.5 text-sm border border-gray-300 dark:border-dark-border rounded hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+                            2
+                        </button>
+                        <button class="px-3 py-1.5 text-sm border border-gray-300 dark:border-dark-border rounded hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        // Bulk selection
+        document.getElementById('selectAll')?.addEventListener('change', function(e) {{
+            const checkboxes = document.querySelectorAll('.product-checkbox');
+            checkboxes.forEach(cb => cb.checked = e.target.checked);
+            updateBulkActions();
+        }});
+        
+        document.querySelectorAll('.product-checkbox').forEach(cb => {{
+            cb.addEventListener('change', updateBulkActions);
+        }});
+        
+        function updateBulkActions() {{
+            const selected = document.querySelectorAll('.product-checkbox:checked').length;
+            const bar = document.getElementById('bulkActionsBar');
+            const count = document.getElementById('selectedCount');
+            
+            if (selected > 0) {{
+                bar.classList.remove('hidden');
+                count.textContent = selected;
+            }} else {{
+                bar.classList.add('hidden');
+            }}
+        }}
+        </script>
+        
+        {template}"#,
+        products.len(),
         header = header,
         rows = rows,
         template = render_product_modal_template(stores, categories)
