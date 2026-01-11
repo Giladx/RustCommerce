@@ -2194,7 +2194,14 @@ fn render_api_tokens_content(tokens: &[AdminApiToken], auth_enabled: bool) -> St
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white"><code class="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{}</code></td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
+                            <div class="flex items-center gap-2">
+                                <code class="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">{}</code>
+                                <button onclick="copyToken(this, '{}')" class="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Copy token">
+                                    <span class="material-icons text-sm">content_copy</span>
+                                </button>
+                            </div>
+                        </td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
                         <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
@@ -2206,6 +2213,7 @@ fn render_api_tokens_content(tokens: &[AdminApiToken], auth_enabled: bool) -> St
                         </td>
                     </tr>"#,
                     html_escape(&token.name),
+                    token.token,
                     token.token,
                     token.description.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
                     status_badge,
@@ -2236,7 +2244,33 @@ fn render_api_tokens_content(tokens: &[AdminApiToken], auth_enabled: bool) -> St
                 </thead>
                 <tbody>{rows}</tbody>
             </table>
-        </div>{template}",
+        </div>
+        
+        <script>
+        function copyToken(btn, token) {{
+            navigator.clipboard.writeText(token).then(() => {{
+                const icon = btn.querySelector('.material-icons');
+                const originalText = icon.textContent;
+                
+                // Change to checkmark
+                icon.textContent = 'check';
+                icon.classList.add('text-green-500');
+                btn.classList.add('bg-green-50', 'dark:bg-green-900/20');
+                
+                // Reset after 2 seconds
+                setTimeout(() => {{
+                    icon.textContent = originalText;
+                    icon.classList.remove('text-green-500');
+                    btn.classList.remove('bg-green-50', 'dark:bg-green-900/20');
+                }}, 2000);
+            }}).catch(err => {{
+                console.error('Failed to copy:', err);
+                alert('Failed to copy token');
+            }});
+        }}
+        </script>
+        
+        {template}",
         settings_panel,
         header = header,
         rows = rows,
