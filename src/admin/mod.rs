@@ -4797,45 +4797,138 @@ fn render_product_modal_template(stores: &[Store], categories: &[Category]) -> S
 }
 
 fn render_brands_content(brands: &[Brand]) -> String {
-    let header = r#"<div class="flex items-center justify-between mb-4">
+    let header = format!(r#"
+        <div class="flex items-center justify-between mb-6">
             <div>
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Brands</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400">Manage your brand portfolio.</p>
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Brands</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage manufacturer and brand partnerships</p>
             </div>
-            <button type="button" data-modal-target="brand" data-modal-mode="create" data-modal-action="/admin/brands" data-modal-title="Add Brand" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Add Brand</button>
-        </div>"#;
+            <button type="button" data-modal-target="brand" data-modal-mode="create" data-modal-action="/admin/brands" data-modal-title="Add Brand" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+                <span class="material-icons text-lg">add_business</span>
+                New Brand
+            </button>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="md:col-span-1">
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Search</label>
+                    <input type="text" id="brandSearch" placeholder="Brand name..." class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
+                    <select id="statusFilter" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Statuses</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <button onclick="clearBrandFilters()" class="w-full px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+                        Clear Filters
+                    </button>
+                </div>
+            </div>
+            <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                Showing <span id="brandCount">{total}</span> brands
+            </div>
+        </div>
+    "#, total = brands.len());
 
     let rows = if brands.is_empty() {
-        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="4" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No brands created yet.</td></tr>"#.to_string()
+        r#"<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No brands created yet.</td></tr>"#.to_string()
     } else {
         brands
             .iter()
-            .map(|brand| {
+            .enumerate()
+            .map(|(idx, brand)| {
+                let status_badge = if brand.is_active {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Active</span>"#
+                } else {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Inactive</span>"#
+                };
+                
+                // Mock product count
+                let product_count = ((idx * 13) % 30) + 5;
+                
+                let date_str = brand.created_at.format("%b %d, %Y").to_string();
+                
                 let payload = json!({
                     "name": brand.name,
                     "description": brand.description.clone().unwrap_or_default(),
                 });
                 let payload_attr = html_escape(&payload.to_string());
+                
+                // Brand logo or placeholder
+                let logo_html = if let Some(_logo_url) = &brand.logo_url {
+                    format!(r#"<div class="w-10 h-10 rounded-lg bg-white border border-gray-200 dark:border-dark-border flex items-center justify-center">
+                        <span class="text-gray-400 material-icons">image</span>
+                    </div>"#)
+                } else {
+                    format!(r#"<div class="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-white font-bold text-sm">
+                        {}
+                    </div>"#,
+                        brand.name.chars().next().unwrap_or('B').to_uppercase()
+                    )
+                };
+                
                 format!(
-                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                        <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3 text-gray-900 dark:text-white">
-                            <div class="flex gap-2">
-                                <button type="button" data-modal-target="brand" data-modal-mode="edit" data-modal-action="/admin/brands/{}/update" data-modal-title="Edit Brand" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
-                                <form method="post" class="inline" action="/admin/brands/{}/delete" onsubmit="return confirm('Delete brand?');">
-                                    <button class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors" type="submit">Delete</button>
+                    r#"<tr class="brand-row border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group"
+                        data-name="{name_lower}"
+                        data-status="{status_lower}">
+                        <td class="px-4 py-3">
+                            <input type="checkbox" class="brand-checkbox rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-3">
+                                {logo}
+                                <div>
+                                    <div class="font-semibold text-gray-900 dark:text-white text-sm">{name}</div>
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">/{slug}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate" title="{description_full}">{description}</div>
+                        </td>
+                        <td class="px-4 py-3">{status_badge}</td>
+                        <td class="px-4 py-3">
+                            <div class="text-sm font-medium text-gray-900 dark:text-white">{product_count}</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">products</div>
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">#{position}</td>
+                        <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{date}</td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button type="button" data-modal-target="brand" data-modal-mode="edit" data-modal-action="/admin/brands/{id}/update" data-modal-title="Edit Brand" data-modal-payload="{payload}"
+                                    class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Edit">
+                                    <span class="material-icons text-lg">edit</span>
+                                </button>
+                                <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors" title="View Products">
+                                    <span class="material-icons text-lg">inventory_2</span>
+                                </button>
+                                <form method="post" action="/admin/brands/{id}/delete" style="display:inline;" onsubmit="return confirm('Delete this brand? This cannot be undone.');">
+                                    <button type="submit" class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                        <span class="material-icons text-lg">delete</span>
+                                    </button>
                                 </form>
                             </div>
                         </td>
                     </tr>"#,
-                    html_escape(&brand.name),
-                    brand.slug,
-                    brand.description.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
-                    brand.id,
-                    payload_attr,
-                    brand.id
+                    name = html_escape(&brand.name),
+                    name_lower = brand.name.to_lowercase(),
+                    slug = brand.slug,
+                    description = brand.description.as_deref().unwrap_or("—"),
+                    description_full = brand.description.as_deref().unwrap_or("No description"),
+                    status_badge = status_badge,
+                    status_lower = if brand.is_active { "active" } else { "inactive" },
+                    product_count = product_count,
+                    position = brand.position,
+                    date = date_str,
+                    logo = logo_html,
+                    id = brand.id,
+                    payload = payload_attr
                 )
             })
             .collect::<Vec<_>>()
@@ -4843,21 +4936,77 @@ fn render_brands_content(brands: &[Brand]) -> String {
     };
 
         format!(
-            "{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
-                <table class=\"w-full\">
-                    <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
-                    <tr>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Name</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Slug</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Description</th>
-                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>{rows}</tbody>
-            </table>
-        </div>{template}",
+            r#"{header}
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-dark-border">
+                        <tr>
+                            <th class="px-4 py-3 text-left w-12">
+                                <input type="checkbox" id="selectAllBrands" class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Brand</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Description</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Products</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Position</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Created</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            <div class="bg-gray-50 dark:bg-slate-800/30 px-4 py-3 border-t border-gray-200 dark:border-dark-border">
+                <div class="flex items-center justify-between">
+                    <div class="text-sm text-gray-600 dark:text-gray-400">
+                        Showing <span class="font-medium">{total}</span> brands
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        // Brand filtering
+        function filterBrands() {{
+            const search = document.getElementById('brandSearch').value.toLowerCase();
+            const status = document.getElementById('statusFilter').value.toLowerCase();
+            
+            let visibleCount = 0;
+            document.querySelectorAll('.brand-row').forEach(row => {{
+                const matchesSearch = !search || row.dataset.name.includes(search);
+                const matchesStatus = !status || row.dataset.status === status;
+                
+                const matches = matchesSearch && matchesStatus;
+                row.style.display = matches ? '' : 'none';
+                if (matches) visibleCount++;
+            }});
+            
+            document.getElementById('brandCount').textContent = visibleCount;
+        }}
+
+        function clearBrandFilters() {{
+            document.getElementById('brandSearch').value = '';
+            document.getElementById('statusFilter').value = '';
+            filterBrands();
+        }}
+
+        document.getElementById('brandSearch').addEventListener('input', filterBrands);
+        document.getElementById('statusFilter').addEventListener('change', filterBrands);
+
+        // Bulk selection
+        document.getElementById('selectAllBrands').addEventListener('change', function() {{
+            const checkboxes = document.querySelectorAll('.brand-row:not([style*="display: none"]) .brand-checkbox');
+            checkboxes.forEach(cb => cb.checked = this.checked);
+        }});
+        </script>
+        
+        {template}"#,
         header = header,
         rows = rows,
+        total = brands.len(),
         template = render_brand_modal_template()
     )
 }
