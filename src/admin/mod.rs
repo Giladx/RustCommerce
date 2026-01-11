@@ -3728,6 +3728,47 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
         }}
         </script>
         
+        <!-- Product Modal Container -->
+        <div id="productModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <!-- Modal content will be inserted here -->
+        </div>
+        
+        <script>
+        // Product Modal Handler
+        document.querySelectorAll('[data-modal-target="product"]').forEach(btn => {{
+            btn.addEventListener('click', function() {{
+                const modal = document.getElementById('productModal');
+                const template = document.getElementById('modal-product-template');
+                const mode = this.dataset.modalMode;
+                
+                // Clone and insert template
+                const content = template.content.cloneNode(true);
+                modal.innerHTML = '';
+                modal.appendChild(content);
+                
+                // Set form action
+                const form = modal.querySelector('form');
+                form.action = this.dataset.modalAction;
+                
+                // If edit mode, populate with data
+                if (mode === 'edit' && this.dataset.modalPayload) {{
+                    try {{
+                        const data = JSON.parse(this.dataset.modalPayload);
+                        if (data.store_id) modal.querySelector('[name="store_id"]').value = data.store_id;
+                        if (data.category_id) modal.querySelector('[name="category_id"]').value = data.category_id;
+                        if (data.title) modal.querySelector('[name="title"]').value = data.title;
+                        if (data.description) modal.querySelector('[name="description"]').value = data.description;
+                        if (data.is_active) modal.querySelector('[name="is_active"]').checked = data.is_active;
+                    }} catch (e) {{
+                        console.error('Failed to parse product data:', e);
+                    }}
+                }}
+                
+                modal.classList.remove('hidden');
+            }});
+        }});
+        </script>
+        
         {template}"#,
         products.len(),
         header = header,
@@ -3751,47 +3792,405 @@ fn render_product_modal_template(stores: &[Store], categories: &[Category]) -> S
 
     format!(
         r#"<template id="modal-product-template">
-        <form method="post" class="space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Store
-                    <select name="store_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Select store</option>
-                        {store_options}
-                    </select>
-                </label>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Category
-                    <select name="category_id" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Unassigned</option>
-                        {category_options}
-                    </select>
-                </label>
+        <div class="bg-white dark:bg-dark-panel rounded-lg max-w-5xl w-full shadow-xl max-h-[90vh] overflow-hidden flex flex-col">
+            <!-- Header -->
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex justify-between items-center">
+                <h3 class="text-xl font-semibold text-gray-900 dark:text-white">Product Details</h3>
+                <button onclick="document.getElementById('productModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <span class="material-icons">close</span>
+                </button>
             </div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Title
-                <input name="title" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </label>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Description
-                <textarea name="description" rows="3" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-            </label>
-            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                <input type="checkbox" name="is_active" value="true" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                Active
-            </label>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Attributes (one per line, format: Name:Value)
-                <textarea name="attributes" rows="3" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-            </label>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Features (one per line, format: Label:Value)
-                <textarea name="features" rows="3" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-            </label>
-            <div class="text-right">
-                <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Save</button>
+            
+            <!-- Tabs Navigation -->
+            <div class="border-b border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-slate-800/50">
+                <nav class="flex -mb-px px-6" role="tablist">
+                    <button type="button" class="tab-btn active px-4 py-3 text-sm font-medium border-b-2 border-blue-600 text-blue-600" data-tab="general">
+                        <div class="flex items-center gap-2">
+                            <span class="material-icons text-sm">info</span>
+                            General
+                        </div>
+                    </button>
+                    <button type="button" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="images">
+                        <div class="flex items-center gap-2">
+                            <span class="material-icons text-sm">photo_library</span>
+                            Images
+                        </div>
+                    </button>
+                    <button type="button" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="inventory">
+                        <div class="flex items-center gap-2">
+                            <span class="material-icons text-sm">inventory</span>
+                            Inventory
+                        </div>
+                    </button>
+                    <button type="button" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="pricing">
+                        <div class="flex items-center gap-2">
+                            <span class="material-icons text-sm">payments</span>
+                            Pricing & Tax
+                        </div>
+                    </button>
+                    <button type="button" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="seo">
+                        <div class="flex items-center gap-2">
+                            <span class="material-icons text-sm">search</span>
+                            SEO
+                        </div>
+                    </button>
+                </nav>
             </div>
-        </form>
+            
+            <!-- Form Container -->
+            <form method="post" class="flex-1 overflow-y-auto">
+                <!-- General Tab -->
+                <div class="tab-content active px-6 py-6 space-y-6" data-tab-content="general">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Store <span class="text-red-500">*</span>
+                            </label>
+                            <select name="store_id" required class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="">Select store</option>
+                                {store_options}
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Category
+                            </label>
+                            <select name="category_id" id="productCategory" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="">Uncategorized</option>
+                                {category_options}
+                            </select>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Choose the main category for this product</p>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Product Name <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" name="title" id="productTitle" required class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g., Wireless Bluetooth Headphones" />
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            SKU (Stock Keeping Unit)
+                        </label>
+                        <input type="text" name="sku" id="productSku" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g., WBH-001" />
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Unique identifier for inventory tracking</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Description
+                        </label>
+                        <textarea name="description" id="productDescription" rows="4" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Detailed product description..."></textarea>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <label class="inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="is_active" value="true" checked class="sr-only peer">
+                            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                            <span class="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">Active (visible in store)</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Images Tab -->
+                <div class="tab-content hidden px-6 py-6" data-tab-content="images">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                                Product Images
+                            </label>
+                            
+                            <!-- Image Gallery -->
+                            <div id="imageGallery" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                <!-- Placeholder images will be added here -->
+                            </div>
+                            
+                            <!-- Upload Button -->
+                            <div class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer">
+                                <input type="file" id="imageUpload" accept="image/*" multiple class="hidden">
+                                <label for="imageUpload" class="cursor-pointer">
+                                    <span class="material-icons text-4xl text-gray-400 mb-2">cloud_upload</span>
+                                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                                        <span class="font-medium text-blue-600 dark:text-blue-400">Click to upload</span> or drag and drop
+                                    </p>
+                                    <p class="text-xs text-gray-500 dark:text-gray-500 mt-1">PNG, JPG, WebP up to 10MB</p>
+                                </label>
+                            </div>
+                            
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                                First image will be used as the main product image
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Inventory Tab -->
+                <div class="tab-content hidden px-6 py-6 space-y-6" data-tab-content="inventory">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Stock Quantity <span class="text-red-500">*</span>
+                            </label>
+                            <input type="number" name="stock_quantity" id="stockQuantity" min="0" value="0" required class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Low Stock Alert
+                            </label>
+                            <input type="number" name="low_stock_threshold" id="lowStockThreshold" min="0" value="10" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Alert when stock falls below this number</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Stock Status
+                            </label>
+                            <select name="stock_status" id="stockStatus" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="in_stock">In Stock</option>
+                                <option value="low_stock">Low Stock</option>
+                                <option value="out_of_stock">Out of Stock</option>
+                                <option value="discontinued">Discontinued</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Weight (kg)
+                            </label>
+                            <input type="number" name="weight" step="0.01" min="0" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0.00">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Dimensions (L×W×H cm)
+                            </label>
+                            <input type="text" name="dimensions" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g., 10×5×3">
+                        </div>
+                    </div>
+                    
+                    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                        <div class="flex items-start gap-3">
+                            <span class="material-icons text-blue-600 dark:text-blue-400 text-sm mt-0.5">info</span>
+                            <div class="text-sm text-blue-800 dark:text-blue-300">
+                                <p class="font-medium mb-1">Inventory Management Tips</p>
+                                <ul class="list-disc list-inside space-y-1 text-xs">
+                                    <li>Set low stock alerts to avoid stockouts</li>
+                                    <li>Update quantities regularly for accurate inventory</li>
+                                    <li>Use SKU for better tracking and organization</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Pricing & Tax Tab -->
+                <div class="tab-content hidden px-6 py-6 space-y-6" data-tab-content="pricing">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Regular Price <span class="text-red-500">*</span>
+                            </label>
+                            <div class="relative">
+                                <span class="absolute left-3 top-2 text-gray-500 dark:text-gray-400">$</span>
+                                <input type="number" name="price" id="productPrice" step="0.01" min="0" required class="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0.00">
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Sale Price
+                            </label>
+                            <div class="relative">
+                                <span class="absolute left-3 top-2 text-gray-500 dark:text-gray-400">$</span>
+                                <input type="number" name="sale_price" step="0.01" min="0" class="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0.00">
+                            </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Optional discounted price</p>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Cost Price
+                            </label>
+                            <div class="relative">
+                                <span class="absolute left-3 top-2 text-gray-500 dark:text-gray-400">$</span>
+                                <input type="number" name="cost_price" step="0.01" min="0" class="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0.00">
+                            </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Your cost for profit calculations</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Tax Class <span class="text-red-500">*</span>
+                            </label>
+                            <select name="tax_class" id="taxClass" required class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="standard">Standard Rate (VAT 17%)</option>
+                                <option value="reduced">Reduced Rate (VAT 9%)</option>
+                                <option value="zero">Zero Rate (0%)</option>
+                                <option value="exempt">Tax Exempt</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Pricing Summary Card -->
+                    <div class="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-4 border border-gray-200 dark:border-dark-border">
+                        <h4 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Pricing Summary</h4>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-600 dark:text-gray-400">Base Price:</span>
+                                <span class="font-medium text-gray-900 dark:text-white" id="basePriceDisplay">$0.00</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600 dark:text-gray-400">Tax (17%):</span>
+                                <span class="font-medium text-gray-900 dark:text-white" id="taxDisplay">$0.00</span>
+                            </div>
+                            <div class="flex justify-between pt-2 border-t border-gray-200 dark:border-dark-border">
+                                <span class="font-semibold text-gray-900 dark:text-white">Final Price:</span>
+                                <span class="font-bold text-blue-600 dark:text-blue-400" id="finalPriceDisplay">$0.00</span>
+                            </div>
+                            <div class="flex justify-between text-xs" id="profitDisplay">
+                                <span class="text-gray-600 dark:text-gray-400">Profit Margin:</span>
+                                <span class="font-medium text-green-600 dark:text-green-400">—</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- SEO Tab -->
+                <div class="tab-content hidden px-6 py-6 space-y-6" data-tab-content="seo">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            URL Slug
+                        </label>
+                        <input type="text" name="slug" id="productSlug" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="auto-generated-from-title">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Auto-generated from product name, but you can customize it</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Meta Title
+                        </label>
+                        <input type="text" name="meta_title" maxlength="60" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Custom title for search engines">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Recommended: 50-60 characters</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Meta Description
+                        </label>
+                        <textarea name="meta_description" maxlength="160" rows="3" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Brief description for search results"></textarea>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Recommended: 150-160 characters</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Keywords (comma-separated)
+                        </label>
+                        <input type="text" name="keywords" class="w-full rounded-lg border border-gray-300 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="wireless, bluetooth, headphones, audio">
+                    </div>
+                </div>
+                
+                <!-- Footer Actions -->
+                <div class="px-6 py-4 bg-gray-50 dark:bg-slate-800/50 border-t border-gray-200 dark:border-dark-border flex justify-between items-center">
+                    <button type="button" onclick="document.getElementById('productModal').classList.add('hidden')" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-slate-800 border border-gray-300 dark:border-dark-border rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                        Cancel
+                    </button>
+                    <div class="flex gap-2">
+                        <button type="submit" name="save_action" value="save" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
+                            Save Product
+                        </button>
+                        <button type="submit" name="save_action" value="save_and_add" class="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
+                            Save & Add Another
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        
+        <script>
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {{
+            btn.addEventListener('click', function() {{
+                const tabName = this.dataset.tab;
+                
+                // Update buttons
+                document.querySelectorAll('.tab-btn').forEach(b => {{
+                    b.classList.remove('active', 'border-blue-600', 'text-blue-600');
+                    b.classList.add('border-transparent', 'text-gray-500');
+                }});
+                this.classList.add('active', 'border-blue-600', 'text-blue-600');
+                this.classList.remove('border-transparent', 'text-gray-500');
+                
+                // Update content
+                document.querySelectorAll('.tab-content').forEach(content => {{
+                    content.classList.add('hidden');
+                    content.classList.remove('active');
+                }});
+                const activeContent = document.querySelector(`[data-tab-content="${{tabName}}"]`);
+                activeContent.classList.remove('hidden');
+                activeContent.classList.add('active');
+            }});
+        }});
+        
+        // Auto-generate slug from title
+        document.getElementById('productTitle')?.addEventListener('input', function(e) {{
+            const slug = e.target.value
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-|-$/g, '');
+            document.getElementById('productSlug').value = slug;
+        }});
+        
+        // Price calculator
+        function updatePricingSummary() {{
+            const price = parseFloat(document.getElementById('productPrice')?.value || 0);
+            const costPrice = parseFloat(document.querySelector('[name="cost_price"]')?.value || 0);
+            const tax = price * 0.17;
+            const finalPrice = price + tax;
+            
+            document.getElementById('basePriceDisplay').textContent = `$${{price.toFixed(2)}}`;
+            document.getElementById('taxDisplay').textContent = `$${{tax.toFixed(2)}}`;
+            document.getElementById('finalPriceDisplay').textContent = `$${{finalPrice.toFixed(2)}}`;
+            
+            if (costPrice > 0) {{
+                const profit = price - costPrice;
+                const margin = ((profit / price) * 100).toFixed(1);
+                const profitSpan = document.getElementById('profitDisplay').querySelector('span:last-child');
+                profitSpan.textContent = `$${{profit.toFixed(2)}} (${{margin}}%)`;
+                profitSpan.className = profit > 0 ? 'font-medium text-green-600 dark:text-green-400' : 'font-medium text-red-600 dark:text-red-400';
+            }}
+        }}
+        
+        document.getElementById('productPrice')?.addEventListener('input', updatePricingSummary);
+        document.querySelector('[name="cost_price"]')?.addEventListener('input', updatePricingSummary);
+        
+        // Image upload preview
+        document.getElementById('imageUpload')?.addEventListener('change', function(e) {{
+            const gallery = document.getElementById('imageGallery');
+            Array.from(e.target.files).forEach(file => {{
+                const reader = new FileReader();
+                reader.onload = function(e) {{
+                    const div = document.createElement('div');
+                    div.className = 'relative group';
+                    div.innerHTML = `
+                        <img src="${{e.target.result}}" class="w-full h-32 object-cover rounded-lg border border-gray-200 dark:border-dark-border">
+                        <button type="button" class="absolute top-1 right-1 p-1 bg-red-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span class="material-icons text-sm">delete</span>
+                        </button>
+                    `;
+                    gallery.appendChild(div);
+                }};
+                reader.readAsDataURL(file);
+            }});
+        }});
+        </script>
     </template>"#,
         store_options = store_options,
         category_options = category_options
