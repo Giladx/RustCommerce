@@ -2697,6 +2697,7 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
 <html lang="en">
 <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title} - RustCommerce Admin</title>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -2719,20 +2720,36 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
     </script>
     <style>
         .material-icons {{ font-size: 18px; }}
+        @media (max-width: 768px) {{
+            .sidebar-overlay {{ 
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 40;
+            }}
+        }}
     </style>
 </head>
 <body class="bg-gray-50 dark:bg-dark-bg transition-colors">
-    <div class="flex h-screen">
+    <div class="flex h-screen overflow-hidden">
+        <!-- Mobile Overlay -->
+        <div id="sidebarOverlay" class="hidden sidebar-overlay md:hidden" onclick="toggleMobileSidebar()"></div>
+        
         <!-- Sidebar -->
-        <aside class="w-56 bg-slate-900 dark:bg-dark-bg text-gray-200 flex flex-col overflow-y-auto border-r border-slate-800 dark:border-dark-border">
+        <aside id="sidebar" class="fixed md:static inset-y-0 left-0 z-50 w-64 md:w-56 bg-slate-900 dark:bg-dark-bg text-gray-200 flex flex-col overflow-y-auto border-r border-slate-800 dark:border-dark-border transform -translate-x-full md:translate-x-0 transition-transform duration-300">
             <!-- Logo & Theme Toggle -->
             <div class="p-4 border-b border-slate-800 dark:border-dark-border">
                 <div class="flex items-center justify-between mb-3">
                     <h1 class="text-base font-bold tracking-wide">RustCommerce</h1>
-                    <button onclick="toggleTheme()" class="p-1.5 rounded-lg hover:bg-slate-800 transition-colors" title="Toggle theme">
-                        <span class="material-icons text-sm dark:hidden">light_mode</span>
-                        <span class="material-icons text-sm hidden dark:inline">dark_mode</span>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleTheme()" class="p-1.5 rounded-lg hover:bg-slate-800 transition-colors" title="Toggle theme">
+                            <span class="material-icons text-sm dark:hidden">light_mode</span>
+                            <span class="material-icons text-sm hidden dark:inline">dark_mode</span>
+                        </button>
+                        <button onclick="toggleMobileSidebar()" class="md:hidden p-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+                            <span class="material-icons text-sm">close</span>
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -2741,13 +2758,31 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
         </aside>
         
         <!-- Main Content -->
-        <main class="flex-1 overflow-y-auto">
-            <div class="max-w-7xl mx-auto p-6">
-                <!-- Header -->
-                <header class="mb-6">
+        <main class="flex-1 overflow-y-auto w-full">
+            <!-- Mobile Header -->
+            <div class="md:hidden sticky top-0 z-30 bg-white dark:bg-dark-panel border-b border-gray-200 dark:border-dark-border px-4 py-3 flex items-center justify-between">
+                <button onclick="toggleMobileSidebar()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+                    <span class="material-icons">menu</span>
+                </button>
+                <h1 class="text-lg font-bold text-gray-900 dark:text-white">RustCommerce</h1>
+                <button onclick="toggleTheme()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+                    <span class="material-icons dark:hidden">light_mode</span>
+                    <span class="material-icons hidden dark:inline">dark_mode</span>
+                </button>
+            </div>
+            
+            <div class="max-w-7xl mx-auto p-4 md:p-6">
+                <!-- Header (Hidden on mobile, shown in mobile header) -->
+                <header class="mb-6 hidden md:block">
                     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{subtitle}</p>
                 </header>
+                
+                <!-- Mobile Page Title -->
+                <div class="md:hidden mb-4">
+                    <h2 class="text-xl font-bold text-gray-900 dark:text-white">{title}</h2>
+                    <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">{subtitle}</p>
+                </div>
                 
                 <!-- Content -->
                 {content}
@@ -2988,6 +3023,28 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
                 }}
             }});
         }});
+        
+        // Mobile sidebar toggle
+        function toggleMobileSidebar() {{
+            const sidebar = document.getElementById('admin-sidebar');
+            const overlay = document.getElementById('mobile-overlay');
+            if (sidebar && overlay) {{
+                const isHidden = sidebar.classList.contains('-translate-x-full');
+                if (isHidden) {{
+                    sidebar.classList.remove('-translate-x-full');
+                    overlay.classList.remove('hidden');
+                }} else {{
+                    sidebar.classList.add('-translate-x-full');
+                    overlay.classList.add('hidden');
+                }}
+            }}
+        }}
+        
+        // Close sidebar when clicking overlay
+        const mobileOverlay = document.getElementById('mobile-overlay');
+        if (mobileOverlay) {{
+            mobileOverlay.addEventListener('click', toggleMobileSidebar);
+        }}
         
         if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {{
             document.documentElement.classList.add('dark');
