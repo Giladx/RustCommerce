@@ -20,8 +20,9 @@ use crate::{
     api::{
         dto::UpdateProductRequest,
         repository::{
-            category_repository, checkout_repository, product_attribute_repository,
-            product_feature_repository, product_repository, store_repository,
+            category_repository, checkout_repository, customer_repository, customer_service_repository,
+            product_attribute_repository, product_feature_repository, product_repository,
+            store_repository,
         },
     },
     domain::{
@@ -30,6 +31,8 @@ use crate::{
         checkout::{
             CreditSlip, DeliverySlip, GiftCard, Invoice, Order, OrderStatus, ShoppingCart,
         },
+        customer::Customer,
+        customer_service::{ChatMessage, MerchandiseReturn, OrderMessage},
         product::{Product, ProductAttribute, ProductFeature},
         store::store::Store,
     },
@@ -41,6 +44,8 @@ enum AdminNav {
     Dashboard,
     Catalog,
     Orders,
+    Customers,
+    CustomerService,
     ApiTokens,
 }
 
@@ -53,6 +58,16 @@ struct AdminApiToken {
     is_active: bool,
     last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomerForm {
+    store_id: Uuid,
+    full_name: String,
+    email: String,
+    phone: Option<String>,
+    #[serde(default)]
+    is_guest: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +158,71 @@ struct OrderStatusForm {
     notes: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct InvoiceForm {
+    order_id: Uuid,
+    store_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+struct InvoiceStatusForm {
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreditSlipForm {
+    order_id: Uuid,
+    slip_number: String,
+    amount: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeliverySlipForm {
+    order_id: Uuid,
+    slip_number: String,
+    tracking_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GiftCardForm {
+    store_id: Uuid,
+    initial_balance: f64,
+    recipient_email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GiftCardUpdateForm {
+    code: String,
+    balance: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessageForm {
+    customer_id: Uuid,
+    message: String,
+    sender: String, // "customer" or "support"
+}
+
+#[derive(Debug, Deserialize)]
+struct OrderMessageForm {
+    order_id: Uuid,
+    message: String,
+    is_internal: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrderMessageReplyForm {
+    reply: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MerchandiseReturnForm {
+    order_id: Uuid,
+    reason: String,
+    items: String, // JSON array of items
+    status: String,
+}
+
 pub fn router() -> Router {
     let protected_routes = Router::new()
         .route("/", get(dashboard_page))
@@ -152,6 +232,10 @@ pub fn router() -> Router {
         .route("/admin/api-tokens", get(api_tokens_page).post(create_api_token))
         .route("/admin/api-tokens/:id/toggle", post(toggle_api_token))
         .route("/admin/settings/auth", post(update_api_auth_settings))
+        // Customers
+        .route("/admin/customers", get(customers_page).post(create_customer))
+        .route("/admin/customers/:id/update", post(update_customer))
+        .route("/admin/customers/:id/delete", post(delete_customer))
         // Stores
         .route("/admin/stores", get(stores_page).post(create_store))
         .route("/admin/stores/:id/update", post(update_store))
@@ -173,11 +257,28 @@ pub fn router() -> Router {
         // Orders
         .route("/admin/orders", get(orders_page).post(create_order))
         .route("/admin/orders/:id/status", post(update_order_status))
-        .route("/admin/invoices", get(invoices_page))
-        .route("/admin/credit-slips", get(credit_slips_page))
-        .route("/admin/delivery-slips", get(delivery_slips_page))
+        .route("/admin/invoices", get(invoices_page).post(create_invoice))
+        .route("/admin/invoices/:id/update", post(update_invoice))
+        .route("/admin/invoices/:id/delete", post(delete_invoice))
+        .route("/admin/credit-slips", get(credit_slips_page).post(create_credit_slip))
+        .route("/admin/credit-slips/:id/update", post(update_credit_slip))
+        .route("/admin/credit-slips/:id/delete", post(delete_credit_slip))
+        .route("/admin/delivery-slips", get(delivery_slips_page).post(create_delivery_slip))
+        .route("/admin/delivery-slips/:id/update", post(update_delivery_slip))
+        .route("/admin/delivery-slips/:id/delete", post(delete_delivery_slip))
         .route("/admin/shopping-carts", get(shopping_carts_page))
-        .route("/admin/gift-cards", get(gift_cards_page))
+        .route("/admin/shopping-carts/:id/delete", post(delete_shopping_cart))
+        .route("/admin/gift-cards", get(gift_cards_page).post(create_gift_card))
+        .route("/admin/gift-cards/:id/update", post(update_gift_card))
+        .route("/admin/gift-cards/:id/delete", post(delete_gift_card))
+        // Customer Service
+        .route("/admin/customer-service/chat", get(customer_service_chat_page).post(send_chat_message))
+        .route("/admin/customer-service/order-messages", get(order_messages_page).post(create_order_message))
+        .route("/admin/customer-service/order-messages/:id/reply", post(reply_order_message))
+        .route("/admin/customer-service/order-messages/:id/delete", post(delete_order_message_handler))
+        .route("/admin/customer-service/returns", get(merchandise_returns_page).post(create_merchandise_return))
+        .route("/admin/customer-service/returns/:id/update", post(update_merchandise_return))
+        .route("/admin/customer-service/returns/:id/delete", post(delete_merchandise_return_handler))
         // Attributes & Features
         .route(
             "/admin/product-attributes",
@@ -212,9 +313,13 @@ async fn dashboard_page(
     Extension(pool): Extension<PgPool>,
 ) -> Html<String> {
     let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
-    let categories = category_repository::list_categories(&pool).await.unwrap_or_default();
     let products = product_repository::list_products(&pool).await.unwrap_or_default();
     let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
+    let customers_count = sqlx::query!("SELECT COUNT(*) as count FROM customers")
+        .fetch_one(&pool)
+        .await
+        .map(|r| r.count.unwrap_or(0))
+        .unwrap_or(0);
     
     let content = format!(
         r#"<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -230,10 +335,10 @@ async fn dashboard_page(
             <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-5 border border-gray-200 dark:border-dark-border">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Categories</p>
+                        <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Customers</p>
                         <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{}</p>
                     </div>
-                    <span class="material-icons text-green-500 text-3xl">category</span>
+                    <span class="material-icons text-green-500 text-3xl">people</span>
                 </div>
             </div>
             <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-5 border border-gray-200 dark:border-dark-border">
@@ -277,7 +382,7 @@ async fn dashboard_page(
             </div>
         </div>"#,
         stores.len(),
-        categories.len(),
+        customers_count,
         products.len(),
         orders.len()
     );
@@ -581,31 +686,35 @@ fn parse_cart_items(
 
 async fn invoices_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let invoices = checkout_repository::list_invoices(&pool, None).await.unwrap_or_default();
+    let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
+    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
     Html(render_page(
         AdminNav::Orders,
         "Invoices",
         "Billing documents and payments",
-        &render_invoices_content(&invoices),
+        &render_invoices_content(&invoices, &orders, &stores),
     ))
 }
 
 async fn credit_slips_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let slips = checkout_repository::list_credit_slips(&pool, None).await.unwrap_or_default();
+    let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
     Html(render_page(
         AdminNav::Orders,
         "Credit Slips",
         "Refunds and credits",
-        &render_credit_slips_content(&slips),
+        &render_credit_slips_content(&slips, &orders),
     ))
 }
 
 async fn delivery_slips_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let slips = checkout_repository::list_delivery_slips(&pool, None).await.unwrap_or_default();
+    let orders = checkout_repository::list_orders(&pool, None).await.unwrap_or_default();
     Html(render_page(
         AdminNav::Orders,
         "Delivery Slips",
         "Shipping and delivery tracking",
-        &render_delivery_slips_content(&slips),
+        &render_delivery_slips_content(&slips, &orders),
     ))
 }
 
@@ -626,12 +735,740 @@ async fn shopping_carts_page(Extension(pool): Extension<PgPool>) -> Html<String>
 
 async fn gift_cards_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let cards = checkout_repository::list_gift_cards(&pool, None).await.unwrap_or_default();
+    let stores = store_repository::list_stores(&pool).await.unwrap_or_default();
     Html(render_page(
         AdminNav::Orders,
         "Gift Cards",
         "Manage gift card codes and balances",
-        &render_gift_cards_content(&cards),
+        &render_gift_cards_content(&cards, &stores),
     ))
+}
+
+// ===== Order-Related CRUD Handlers =====
+
+async fn create_invoice(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<InvoiceForm>,
+) -> impl IntoResponse {
+    match checkout_repository::create_invoice(&pool, form.order_id, form.store_id).await {
+        Ok(_) => Redirect::to("/admin/invoices").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create invoice: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create invoice")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_invoice(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<InvoiceStatusForm>,
+) -> impl IntoResponse {
+    let query = "UPDATE invoices SET status = $1 WHERE id = $2";
+    match sqlx::query(query)
+        .bind(&form.status)
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/invoices").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update invoice: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update invoice")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_invoice(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match sqlx::query("DELETE FROM invoices WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/invoices").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete invoice: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete invoice")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn create_credit_slip(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<CreditSlipForm>,
+) -> impl IntoResponse {
+    let amount = rust_decimal::Decimal::from_f64(form.amount).unwrap_or_default();
+    let query = "INSERT INTO credit_slips (order_id, slip_number, amount) VALUES ($1, $2, $3)";
+    match sqlx::query(query)
+        .bind(form.order_id)
+        .bind(&form.slip_number)
+        .bind(amount)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/credit-slips").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create credit slip: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create credit slip")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_credit_slip(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<CreditSlipForm>,
+) -> impl IntoResponse {
+    let amount = rust_decimal::Decimal::from_f64(form.amount).unwrap_or_default();
+    let query = "UPDATE credit_slips SET slip_number = $1, amount = $2 WHERE id = $3";
+    match sqlx::query(query)
+        .bind(&form.slip_number)
+        .bind(amount)
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/credit-slips").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update credit slip: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update credit slip")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_credit_slip(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match sqlx::query("DELETE FROM credit_slips WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/credit-slips").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete credit slip: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete credit slip")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn create_delivery_slip(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<DeliverySlipForm>,
+) -> impl IntoResponse {
+    let query = "INSERT INTO delivery_slips (order_id, slip_number, tracking_number) VALUES ($1, $2, $3)";
+    match sqlx::query(query)
+        .bind(form.order_id)
+        .bind(&form.slip_number)
+        .bind(form.tracking_number)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/delivery-slips").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create delivery slip: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create delivery slip")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_delivery_slip(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<DeliverySlipForm>,
+) -> impl IntoResponse {
+    let query = "UPDATE delivery_slips SET slip_number = $1, tracking_number = $2 WHERE id = $3";
+    match sqlx::query(query)
+        .bind(&form.slip_number)
+        .bind(form.tracking_number)
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/delivery-slips").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update delivery slip: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update delivery slip")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_delivery_slip(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match sqlx::query("DELETE FROM delivery_slips WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/delivery-slips").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete delivery slip: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete delivery slip")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_shopping_cart(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match sqlx::query("DELETE FROM shopping_carts WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/shopping-carts").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete cart: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete cart")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn create_gift_card(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<GiftCardForm>,
+) -> impl IntoResponse {
+    let balance = rust_decimal::Decimal::from_f64(form.initial_balance).unwrap_or_default();
+    match checkout_repository::create_gift_card(
+        &pool,
+        form.store_id,
+        balance,
+        form.recipient_email,
+    )
+    .await
+    {
+        Ok(_) => Redirect::to("/admin/gift-cards").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create gift card: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create gift card")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_gift_card(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<GiftCardUpdateForm>,
+) -> impl IntoResponse {
+    let balance = rust_decimal::Decimal::from_f64(form.balance).unwrap_or_default();
+    let query = "UPDATE gift_cards SET code = $1, current_balance = $2 WHERE id = $3";
+    match sqlx::query(query)
+        .bind(&form.code)
+        .bind(balance)
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/gift-cards").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update gift card: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update gift card")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_gift_card(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match sqlx::query("DELETE FROM gift_cards WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/gift-cards").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete gift card: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete gift card")),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ===== Customer Service Handlers =====
+
+async fn customer_service_chat_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let messages = customer_service_repository::list_chat_messages(&pool)
+        .await
+        .unwrap_or_default();
+    let customers = customer_repository::list_customers(&pool)
+        .await
+        .unwrap_or_default();
+    Html(render_page(
+        AdminNav::CustomerService,
+        "Customer Service Chat",
+        "Live chat conversations with customers",
+        &render_chat_content(&messages, &customers),
+    ))
+}
+
+async fn send_chat_message(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<ChatMessageForm>,
+) -> impl IntoResponse {
+    let message = ChatMessage {
+        id: Uuid::new_v4(),
+        customer_id: form.customer_id,
+        message: form.message,
+        sender: form.sender,
+        created_at: Utc::now(),
+    };
+
+    match customer_service_repository::insert_chat_message(&pool, &message).await {
+        Ok(_) => Redirect::to("/admin/customer-service/chat").into_response(),
+        Err(err) => {
+            eprintln!("Failed to send message: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to send message")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn order_messages_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let messages = customer_service_repository::list_order_messages(&pool)
+        .await
+        .unwrap_or_default();
+    let orders = checkout_repository::list_orders(&pool, None)
+        .await
+        .unwrap_or_default();
+    Html(render_page(
+        AdminNav::CustomerService,
+        "Order Messages",
+        "Customer questions and internal notes about orders",
+        &render_order_messages_content(&messages, &orders),
+    ))
+}
+
+async fn create_order_message(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<OrderMessageForm>,
+) -> impl IntoResponse {
+    let message = OrderMessage {
+        id: Uuid::new_v4(),
+        order_id: form.order_id,
+        message: form.message,
+        is_internal: form.is_internal,
+        reply: None,
+        created_at: Utc::now(),
+        replied_at: None,
+    };
+
+    match customer_service_repository::insert_order_message(&pool, &message).await {
+        Ok(_) => Redirect::to("/admin/customer-service/order-messages").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create order message: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create message")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn reply_order_message(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<OrderMessageReplyForm>,
+) -> impl IntoResponse {
+    match customer_service_repository::reply_to_order_message(&pool, id, form.reply).await {
+        Ok(_) => Redirect::to("/admin/customer-service/order-messages").into_response(),
+        Err(err) => {
+            eprintln!("Failed to reply to message: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to reply")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_order_message_handler(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match customer_service_repository::delete_order_message(&pool, id).await {
+        Ok(_) => Redirect::to("/admin/customer-service/order-messages").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete message: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete message")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn merchandise_returns_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let returns = customer_service_repository::list_merchandise_returns(&pool)
+        .await
+        .unwrap_or_default();
+    let orders = checkout_repository::list_orders(&pool, None)
+        .await
+        .unwrap_or_default();
+    Html(render_page(
+        AdminNav::CustomerService,
+        "Merchandise Returns",
+        "Manage product returns and stock restocking",
+        &render_merchandise_returns_content(&returns, &orders),
+    ))
+}
+
+async fn create_merchandise_return(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<MerchandiseReturnForm>,
+) -> impl IntoResponse {
+    let items: serde_json::Value = serde_json::from_str(&form.items).unwrap_or(json!([]));
+    let ret = MerchandiseReturn {
+        id: Uuid::new_v4(),
+        order_id: form.order_id,
+        reason: form.reason,
+        items,
+        status: form.status,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    match customer_service_repository::insert_merchandise_return(&pool, &ret).await {
+        Ok(_) => Redirect::to("/admin/customer-service/returns").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create return: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create return")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_merchandise_return(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<MerchandiseReturnForm>,
+) -> impl IntoResponse {
+    match customer_service_repository::update_merchandise_return_status(&pool, id, form.status)
+        .await
+    {
+        Ok(_) => Redirect::to("/admin/customer-service/returns").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update return: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update return")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_merchandise_return_handler(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match customer_service_repository::delete_merchandise_return(&pool, id).await {
+        Ok(_) => Redirect::to("/admin/customer-service/returns").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete return: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete return")),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ===== Customers Handlers =====
+
+async fn customers_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let customers = customer_repository::list_customers(&pool)
+        .await
+        .unwrap_or_default();
+    let stores = store_repository::list_stores(&pool)
+        .await
+        .unwrap_or_default();
+
+    Html(render_page(
+        AdminNav::Customers,
+        "Customers",
+        "View and manage your customer base",
+        &render_customers_content(&customers, &stores),
+    ))
+}
+
+async fn create_customer(
+    Extension(pool): Extension<PgPool>,
+    Form(form): Form<CustomerForm>,
+) -> impl IntoResponse {
+    let customer = Customer {
+        id: Uuid::new_v4(),
+        store_id: form.store_id,
+        email: form.email.trim().to_owned(),
+        full_name: form.full_name.trim().to_owned(),
+        phone: optional_text(form.phone),
+        password_hash: None,
+        billing_address: None,
+        delivery_address: None,
+        is_guest: form.is_guest,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    match customer_repository::insert_customer(&pool, &customer).await {
+        Ok(_) => Redirect::to("/admin/customers").into_response(),
+        Err(err) => {
+            eprintln!("Failed to create customer: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to create customer")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_customer(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<CustomerForm>,
+) -> impl IntoResponse {
+    match customer_repository::update_customer(
+        &pool,
+        id,
+        form.full_name.trim().to_owned(),
+        form.email.trim().to_owned(),
+        optional_text(form.phone),
+        form.is_guest,
+    )
+    .await
+    {
+        Ok(_) => Redirect::to("/admin/customers").into_response(),
+        Err(err) => {
+            eprintln!("Failed to update customer: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to update customer")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_customer(
+    Extension(pool): Extension<PgPool>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match customer_repository::delete_customer(&pool, id).await {
+        Ok(_) => Redirect::to("/admin/customers").into_response(),
+        Err(err) => {
+            eprintln!("Failed to delete customer: {err:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(render_error("Unable to delete customer")),
+            )
+                .into_response()
+        }
+    }
+}
+
+fn render_customers_content(customers: &[Customer], stores: &[Store]) -> String {
+    let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
+    let header = r#"<div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Customers</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400">Registered users and guests.</p>
+            </div>
+            <button type="button" data-modal-target="customer" data-modal-mode="create" data-modal-action="/admin/customers" data-modal-title="Add Customer" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Add Customer</button>
+        </div>"#;
+
+    let rows = if customers.is_empty() {
+        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No customers found.</td></tr>"#.to_string()
+    } else {
+        customers
+            .iter()
+            .map(|customer| {
+                let status_badge = if customer.is_guest {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Guest</span>"#
+                } else {
+                    r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Registered</span>"#
+                };
+                let store_name = store_lookup.get(&customer.store_id).map(|s| s.name.as_str()).unwrap_or("Unknown");
+                
+                let payload = json!({
+                    "store_id": customer.store_id,
+                    "full_name": customer.full_name,
+                    "email": customer.email,
+                    "phone": customer.phone.clone().unwrap_or_default(),
+                    "is_guest": customer.is_guest,
+                });
+                let payload_attr = html_escape(&payload.to_string());
+
+                format!(
+                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                        <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
+                            <div class="flex gap-2">
+                                <button type="button" data-modal-target="customer" data-modal-mode="edit" data-modal-action="/admin/customers/{}/update" data-modal-title="Edit Customer" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
+                                <form method="post" class="inline" action="/admin/customers/{}/delete" onsubmit="return confirm('Delete customer?');">
+                                    <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors">Delete</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>"#,
+                    html_escape(&customer.full_name),
+                    html_escape(&customer.email),
+                    customer.phone.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
+                    html_escape(store_name),
+                    status_badge,
+                    customer.id,
+                    payload_attr,
+                    customer.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        "{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
+            <table class=\"w-full\">
+                <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
+                    <tr>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Name</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Email</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Phone</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Store</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Type</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>{template}",
+        header = header,
+        rows = rows,
+        template = render_customer_modal_template(stores)
+    )
+}
+
+fn render_customer_modal_template(stores: &[Store]) -> String {
+    let store_options = stores
+        .iter()
+        .map(|store| {
+            format!(
+                r#"<option value="{}">{}</option>"#,
+                store.id,
+                html_escape(&store.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<template id="modal-customer-template">
+        <form method="post" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Store
+                    <select name="store_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select store</option>
+                        {store_options}
+                    </select>
+                </label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Full Name
+                    <input name="full_name" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </label>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Email
+                    <input name="email" type="email" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Phone
+                    <input name="phone" class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </label>
+            </div>
+            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                <input type="checkbox" name="is_guest" value="true" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                Is Guest
+            </label>
+            <div class="text-right">
+                <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Save</button>
+            </div>
+        </form>
+    </template>"#,
+        store_options = store_options
+    )
 }
 
 // ===== CRUD Handlers =====
@@ -1255,12 +2092,12 @@ fn render_api_tokens_content(tokens: &[AdminApiToken], auth_enabled: bool) -> St
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3"><code class="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{}</code></td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white"><code class="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{}</code></td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <form method="post" action="/admin/api-tokens/{}/toggle">
                                 <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors {}">{}</button>
                             </form>
@@ -1356,11 +2193,73 @@ fn render_api_docs() -> String {
 }"#),
         ("GET", "/api/stores", "List all stores", "None"),
         ("GET", "/api/categories", "List all categories", "None"),
+        ("POST", "/api/categories", "Create a category", r#"{
+  "store_id": "UUID",
+  "name": "String",
+  "slug": "String",
+  "description": "String (optional)",
+  "is_active": "Boolean"
+}"#),
+        ("PUT", "/api/categories/{id}", "Update a category", r#"{
+  "store_id": "UUID",
+  "name": "String",
+  "slug": "String",
+  "description": "String (optional)",
+  "is_active": "Boolean"
+}"#),
+        ("GET", "/api/customers", "List all customers", "None"),
+        ("POST", "/api/customers", "Create a customer", r#"{
+  "store_id": "UUID",
+  "email": "String",
+  "full_name": "String",
+  "phone": "String (optional)",
+  "is_guest": "Boolean"
+}"#),
+        ("GET", "/api/customers/{id}", "Get customer by ID", "None"),
+        ("PUT", "/api/customers/{id}", "Update a customer", r#"{
+  "full_name": "String",
+  "email": "String",
+  "phone": "String (optional)",
+  "is_guest": "Boolean"
+}"#),
+        ("DELETE", "/api/customers/{id}", "Delete a customer", "None"),
         ("GET", "/api/brands", "List all brands", "None"),
+        ("GET", "/api/attributes", "List all product attributes", "None"),
+        ("POST", "/api/attributes", "Create a product attribute", r#"{
+  "product_id": "UUID",
+  "name": "String",
+  "value": "String",
+  "position": "Integer"
+}"#),
+        ("PUT", "/api/attributes/{id}", "Update a product attribute", r#"{
+  "name": "String",
+  "value": "String",
+  "position": "Integer"
+}"#),
+        ("DELETE", "/api/attributes/{id}", "Delete a product attribute", "None"),
+        ("GET", "/api/features", "List all product features", "None"),
+        ("POST", "/api/features", "Create a product feature", r#"{
+  "product_id": "UUID",
+  "label": "String",
+  "value": "String"
+}"#),
+        ("GET", "/api/features/{id}", "Get feature by ID", "None"),
+        ("PUT", "/api/features/{id}", "Update a product feature", r#"{
+  "label": "String",
+  "value": "String"
+}"#),
+        ("DELETE", "/api/features/{id}", "Delete a product feature", "None"),
+        ("GET", "/api/carts", "List all shopping carts", "None"),
         ("POST", "/api/carts", "Create a shopping cart", r#"{
   "store_id": "UUID",
   "session_id": "String (optional)"
 }"#),
+        ("GET", "/api/carts/{id}", "Get cart by ID", "None"),
+        ("PUT", "/api/carts/{id}", "Update cart customer info", r#"{
+  "customer_email": "String (optional)",
+  "customer_name": "String (optional)"
+}"#),
+        ("DELETE", "/api/carts/{id}", "Delete a cart", "None"),
         ("POST", "/api/carts/{id}/items", "Add item to cart", r#"{
   "product_id": "UUID",
   "quantity": "Integer",
@@ -1378,6 +2277,54 @@ fn render_api_docs() -> String {
   "customer_name": "String",
   "total_amount": "Float"
 }"#),
+        ("GET", "/api/invoices", "List all invoices", "None"),
+        ("POST", "/api/invoices", "Create an invoice", r#"{
+  "order_id": "UUID",
+  "store_id": "UUID"
+}"#),
+        ("GET", "/api/invoices/{id}", "Get invoice by ID", "None"),
+        ("PUT", "/api/invoices/{id}", "Update invoice status", r#"{
+  "status": "String (draft|sent|paid|cancelled)"
+}"#),
+        ("DELETE", "/api/invoices/{id}", "Delete an invoice", "None"),
+        ("GET", "/api/credit-slips", "List all credit slips", "None"),
+        ("POST", "/api/credit-slips", "Create a credit slip", r#"{
+  "order_id": "UUID",
+  "slip_number": "String",
+  "amount": "Float"
+}"#),
+        ("GET", "/api/credit-slips/{id}", "Get credit slip by ID", "None"),
+        ("PUT", "/api/credit-slips/{id}", "Update a credit slip", r#"{
+  "order_id": "UUID",
+  "slip_number": "String",
+  "amount": "Float"
+}"#),
+        ("DELETE", "/api/credit-slips/{id}", "Delete a credit slip", "None"),
+        ("GET", "/api/delivery-slips", "List all delivery slips", "None"),
+        ("POST", "/api/delivery-slips", "Create a delivery slip", r#"{
+  "order_id": "UUID",
+  "slip_number": "String",
+  "tracking_number": "String (optional)"
+}"#),
+        ("GET", "/api/delivery-slips/{id}", "Get delivery slip by ID", "None"),
+        ("PUT", "/api/delivery-slips/{id}", "Update a delivery slip", r#"{
+  "order_id": "UUID",
+  "slip_number": "String",
+  "tracking_number": "String (optional)"
+}"#),
+        ("DELETE", "/api/delivery-slips/{id}", "Delete a delivery slip", "None"),
+        ("GET", "/api/gift-cards", "List all gift cards", "None"),
+        ("POST", "/api/gift-cards", "Create a gift card", r#"{
+  "store_id": "UUID",
+  "initial_balance": "Float",
+  "recipient_email": "String (optional)"
+}"#),
+        ("GET", "/api/gift-cards/{id}", "Get gift card by ID", "None"),
+        ("PUT", "/api/gift-cards/{id}", "Update a gift card", r#"{
+  "code": "String",
+  "balance": "Float"
+}"#),
+        ("DELETE", "/api/gift-cards/{id}", "Delete a gift card", "None"),
     ];
 
     let endpoint_rows = endpoints
@@ -1395,14 +2342,14 @@ fn render_api_docs() -> String {
                 format!(
                     r#"curl -X {} http://localhost:3000{} \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer <span class='token-placeholder'>YOUR_TOKEN</span>" \
   -d '{}'"#,
                     method, path, body.replace('\n', " ").replace("  ", "")
                 )
             } else {
                 format!(
                     r#"curl -X {} http://localhost:3000{} \
-  -H "Authorization: Bearer YOUR_TOKEN""#,
+  -H "Authorization: Bearer <span class='token-placeholder'>YOUR_TOKEN</span>""#,
                     method, path
                 )
             };
@@ -1422,9 +2369,12 @@ fn render_api_docs() -> String {
                                 <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Request Body Schema</h4>
                                 <pre class="text-xs bg-gray-50 dark:bg-slate-900 p-3 rounded-lg overflow-x-auto font-mono text-gray-700 dark:text-gray-300">{}</pre>
                             </div>
-                            <div>
+                            <div class="relative group">
                                 <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Example Usage (Curl)</h4>
-                                <pre class="text-xs bg-gray-900 text-blue-300 p-3 rounded-lg overflow-x-auto font-mono">{}</pre>
+                                <pre class="text-xs bg-gray-900 text-blue-300 p-3 rounded-lg overflow-x-auto font-mono pr-10">{}</pre>
+                                <button onclick="copyToClipboard(this)" class="absolute top-8 right-2 p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors opacity-0 group-hover:opacity-100" title="Copy to clipboard">
+                                    <span class="material-icons text-sm">content_copy</span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1481,15 +2431,18 @@ fn render_api_docs() -> String {
                     Authentication
                 </h2>
                 <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    The API supports both <strong>Bearer Token</strong> and <strong>Basic Auth</strong>.
-                    You can manage tokens in the <a href="/admin/api-tokens" class="text-blue-600 hover:underline">API Access</a> section.
+                    Enter your API token below to update all examples.
                 </p>
+                <div class="mb-4">
+                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">API Token</label>
+                    <div class="relative">
+                        <input type="text" id="api-token-input" placeholder="Paste your token here..." class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                        <span class="material-icons absolute left-3 top-2 text-gray-400 text-sm">key</span>
+                    </div>
+                </div>
                 <div class="space-y-2">
                     <div class="text-xs font-mono bg-gray-100 dark:bg-slate-900 p-2 rounded border border-gray-200 dark:border-dark-border">
-                        Authorization: Bearer &lt;YOUR_TOKEN&gt;
-                    </div>
-                    <div class="text-xs font-mono bg-gray-100 dark:bg-slate-900 p-2 rounded border border-gray-200 dark:border-dark-border">
-                        Authorization: Basic &lt;BASE64(user:token)&gt;
+                        Authorization: Bearer &lt;<span class="token-placeholder">YOUR_TOKEN</span>&gt;
                     </div>
                 </div>
             </div>
@@ -1518,6 +2471,36 @@ fn render_api_docs() -> String {
             RustCommerce API v1.0 • <a href="/admin/api-tokens" class="hover:underline">Manage Keys</a>
         </footer>
     </div>
+    <script>
+        const tokenInput = document.getElementById('api-token-input');
+        const placeholders = document.querySelectorAll('.token-placeholder');
+
+        tokenInput.addEventListener('input', (e) => {{
+            const token = e.target.value.trim() || 'YOUR_TOKEN';
+            placeholders.forEach(el => {{
+                el.textContent = token;
+            }});
+        }});
+
+        function copyToClipboard(btn) {{
+            const pre = btn.previousElementSibling;
+            const text = pre.innerText;
+            navigator.clipboard.writeText(text).then(() => {{
+                const icon = btn.querySelector('.material-icons');
+                const original = icon.textContent;
+                icon.textContent = 'check';
+                icon.classList.add('text-green-500');
+                setTimeout(() => {{
+                    icon.textContent = original;
+                    icon.classList.remove('text-green-500');
+                }}, 2000);
+            }});
+        }}
+
+        if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {{
+            document.documentElement.classList.add('dark');
+        }}
+    </script>
 </body>
 </html>
 "###,
@@ -1528,6 +2511,28 @@ fn render_api_docs() -> String {
 // ===== Multi-Page Layout & Rendering =====
 
 fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str) -> String {
+    // Determine current path from title for more granular highlighting
+    let current_path = match title {
+        "Categories" => "/admin/categories",
+        "Products" => "/admin/products",
+        "Brands" => "/admin/brands",
+        "Attributes" => "/admin/product-attributes",
+        "Features" => "/admin/product-features",
+        "Orders" => "/admin/orders",
+        "Invoices" => "/admin/invoices",
+        "Credit Slips" => "/admin/credit-slips",
+        "Delivery Slips" => "/admin/delivery-slips",
+        "Shopping Carts" => "/admin/shopping-carts",
+        "Gift Cards" => "/admin/gift-cards",
+        "Customers" => "/admin/customers",
+        "Customer Service Chat" => "/admin/customer-service/chat",
+        "Order Messages" => "/admin/customer-service/order-messages",
+        "Merchandise Returns" => "/admin/customer-service/returns",
+        "API Access" => "/admin/api-tokens",
+        "API Documentation" => "/admin/docs",
+        _ => "/admin",
+    };
+    
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -1798,6 +2803,33 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
             localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
         }}
         
+        function toggleNav(btn) {{
+            const container = btn.nextElementSibling;
+            const icon = btn.querySelector('.material-icons');
+            container.classList.toggle('hidden');
+            const isHidden = container.classList.contains('hidden');
+            icon.textContent = isHidden ? 'expand_more' : 'expand_less';
+        }}
+
+        // Initialize nav state
+        document.addEventListener('DOMContentLoaded', () => {{
+            document.querySelectorAll('[data-nav-toggle]').forEach(btn => {{
+                const container = btn.nextElementSibling;
+                const icon = btn.querySelector('.material-icons');
+                // Check if any link inside is active (has bg-blue-500/10 class)
+                // Note: The class string might be escaped or formatted, so check for part of it or the text color
+                const hasActiveLink = container.querySelector('.text-blue-400') !== null;
+                
+                if (hasActiveLink) {{
+                    container.classList.remove('hidden');
+                    icon.textContent = 'expand_less';
+                }} else {{
+                    container.classList.add('hidden');
+                    icon.textContent = 'expand_more';
+                }}
+            }});
+        }});
+        
         if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {{
             document.documentElement.classList.add('dark');
         }}
@@ -1806,16 +2838,18 @@ fn render_page(active_nav: AdminNav, title: &str, subtitle: &str, content: &str)
 </html>"#,
         title = title,
         subtitle = subtitle,
-        nav = render_navigation(active_nav),
+        nav = render_navigation(active_nav, current_path),
         content = content,
     )
 }
 
-fn render_navigation(active: AdminNav) -> String {
+fn render_navigation(active: AdminNav, current_path: &str) -> String {
     let nav_items = [
         (AdminNav::Dashboard, "dashboard", "Dashboard", "/admin"),
         (AdminNav::Catalog, "inventory_2", "Catalog", "/admin/categories"),
         (AdminNav::Orders, "receipt_long", "Orders", "/admin/orders"),
+        (AdminNav::Customers, "people", "Customers", "/admin/customers"),
+        (AdminNav::CustomerService, "support_agent", "Customer Service", "/admin/customer-service/chat"),
         (AdminNav::ApiTokens, "key", "API Access", "/admin/api-tokens"),
     ];
 
@@ -1834,6 +2868,12 @@ fn render_navigation(active: AdminNav) -> String {
         ("local_shipping", "Delivery Slips", "/admin/delivery-slips"),
         ("shopping_cart", "Shopping Carts", "/admin/shopping-carts"),
         ("card_giftcard", "Gift Cards", "/admin/gift-cards"),
+    ];
+
+    let customer_service_items = [
+        ("chat", "Live Chat", "/admin/customer-service/chat"),
+        ("message", "Order Messages", "/admin/customer-service/order-messages"),
+        ("assignment_return", "Returns", "/admin/customer-service/returns"),
     ];
 
     let primary_links = nav_items
@@ -1858,12 +2898,18 @@ fn render_navigation(active: AdminNav) -> String {
     let catalog_links = catalog_entries
         .iter()
         .map(|(icon, label, href)| {
+            let is_active = current_path == *href;
+            let active_class = if is_active {
+                "bg-blue-500/10 text-blue-400"
+            } else {
+                "text-gray-400 hover:bg-slate-800 hover:text-gray-200"
+            };
             format!(
-                r#"<a href="{}" class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-medium text-gray-400 hover:bg-slate-800 hover:text-gray-200">
+                r#"<a href="{}" class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-medium {}">
                     <span class="material-icons">{}</span>
                     <span>{}</span>
                 </a>"#,
-                href, icon, label
+                href, active_class, icon, label
             )
         })
         .collect::<Vec<_>>()
@@ -1872,7 +2918,27 @@ fn render_navigation(active: AdminNav) -> String {
     let order_links = order_items
         .iter()
         .map(|(icon, label, href)| {
-            let is_active = active == AdminNav::Orders && href.contains(label.split_whitespace().next().unwrap_or("").to_lowercase().as_str());
+            let is_active = current_path == *href;
+            let active_class = if is_active {
+                "bg-blue-500/10 text-blue-400"
+            } else {
+                "text-gray-400 hover:bg-slate-800 hover:text-gray-200"
+            };
+            format!(
+                r#"<a href="{}" class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-medium {}">
+                    <span class="material-icons">{}</span>
+                    <span>{}</span>
+                </a>"#,
+                href, active_class, icon, label
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n                    ");
+
+    let customer_service_links = customer_service_items
+        .iter()
+        .map(|(icon, label, href)| {
+            let is_active = current_path == *href;
             let active_class = if is_active {
                 "bg-blue-500/10 text-blue-400"
             } else {
@@ -1899,16 +2965,33 @@ fn render_navigation(active: AdminNav) -> String {
                 
                 <!-- Catalog Section -->
                 <div>
-                    <h3 class="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Catalog</h3>
-                    <div class="space-y-1">
+                    <button onclick="toggleNav(this)" data-nav-toggle class="w-full flex items-center justify-between px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-300 transition-colors focus:outline-none">
+                        <span>Catalog</span>
+                        <span class="material-icons text-[16px]">expand_less</span>
+                    </button>
+                    <div class="space-y-1 transition-all duration-200">
                     {}
                     </div>
                 </div>
                 
                 <!-- Orders Section -->
                 <div>
-                    <h3 class="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Orders</h3>
-                    <div class="space-y-1">
+                    <button onclick="toggleNav(this)" data-nav-toggle class="w-full flex items-center justify-between px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-300 transition-colors focus:outline-none">
+                        <span>Orders</span>
+                        <span class="material-icons text-[16px]">expand_less</span>
+                    </button>
+                    <div class="space-y-1 transition-all duration-200">
+                    {}
+                    </div>
+                </div>
+                
+                <!-- Customer Service Section -->
+                <div>
+                    <button onclick="toggleNav(this)" data-nav-toggle class="w-full flex items-center justify-between px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-300 transition-colors focus:outline-none">
+                        <span>Customer Service</span>
+                        <span class="material-icons text-[16px]">expand_less</span>
+                    </button>
+                    <div class="space-y-1 transition-all duration-200">
                     {}
                     </div>
                 </div>
@@ -1928,7 +3011,7 @@ fn render_navigation(active: AdminNav) -> String {
                     </a>
                 </div>
             </nav>"#,
-        primary_links, catalog_links, order_links
+        primary_links, catalog_links, order_links, customer_service_links
     )
 }
 
@@ -1957,10 +3040,10 @@ fn render_stores_content(stores: &[Store]) -> String {
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <div class="flex gap-2">
                                 <button type="button" data-modal-target="store" data-modal-mode="edit" data-modal-action="/admin/stores/{}/update" data-modal-title="Edit Store" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                                 <form method="post" class="inline" action="/admin/stores/{}/delete" onsubmit="return confirm('Delete store?');">
@@ -2064,10 +3147,10 @@ fn render_categories_content(stores: &[Store], categories: &[Category]) -> Strin
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <div class="flex gap-2">
                                 <button type="button" data-modal-target="category" data-modal-mode="edit" data-modal-action="/admin/categories/{}/update" data-modal-title="Edit Category" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                                 <form method="post" class="inline" action="/admin/categories/{}/delete" onsubmit="return confirm('Delete category?');">
@@ -2187,11 +3270,11 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <div class="flex gap-2">
                                 <button type="button" data-modal-target="product" data-modal-mode="edit" data-modal-action="/admin/products/{}/update" data-modal-title="Edit Product" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                                 <form method="post" class="inline" action="/admin/products/{}/delete" onsubmit="return confirm('Delete product?');">
@@ -2321,9 +3404,9 @@ fn render_brands_content(brands: &[Brand]) -> String {
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <div class="flex gap-2">
                                 <button type="button" data-modal-target="brand" data-modal-mode="edit" data-modal-action="/admin/brands/{}/update" data-modal-title="Edit Brand" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                                 <form method="post" class="inline" action="/admin/brands/{}/delete" onsubmit="return confirm('Delete brand?');">
@@ -2413,10 +3496,10 @@ fn render_attribute_section(attributes: &[ProductAttribute], products: &[Product
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <div class="flex gap-2">
                                 <button type="button" data-modal-target="attribute" data-modal-mode="edit" data-modal-action="/admin/product-attributes/{}/update" data-modal-title="Edit Attribute" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                                 <form method="post" class="inline" action="/admin/product-attributes/{}/delete" onsubmit="return confirm('Delete attribute?');">
@@ -2533,9 +3616,9 @@ fn render_feature_section(features: &[ProductFeature], products: &[Product]) -> 
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <div class="flex gap-2">
                                 <button type="button" data-modal-target="feature" data-modal-mode="edit" data-modal-action="/admin/product-features/{}/update" data-modal-title="Edit Feature" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                                 <form method="post" class="inline" action="/admin/product-features/{}/delete" onsubmit="return confirm('Delete feature?');">
@@ -2833,12 +3916,12 @@ fn render_orders_content(
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50" data-order-id="{}">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">${}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
                             <button type="button" data-modal-target="order-edit" data-modal-mode="edit" data-modal-action="/admin/orders/{}/status" data-modal-title="Update Status" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
                         </td>
                     </tr>"#,
@@ -2898,26 +3981,50 @@ fn order_status_badge_class(code: &str, name: &str) -> &'static str {
     }
 }
 
-fn render_invoices_content(invoices: &[Invoice]) -> String {
+fn render_invoices_content(invoices: &[Invoice], orders: &[Order], stores: &[Store]) -> String {
+    let header = r#"<div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Invoices</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400">Billing documents and payments</p>
+            </div>
+            <button type="button" data-modal-target="invoice" data-modal-mode="create" data-modal-action="/admin/invoices" data-modal-title="Create Invoice" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Create Invoice</button>
+        </div>"#;
+
     let rows = if invoices.is_empty() {
-        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No invoices yet.</td></tr>"#.to_string()
+        r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No invoices yet.</td></tr>"#.to_string()
     } else {
         invoices
             .iter()
             .map(|inv| {
+                let payload = json!({
+                    "status": inv.status,
+                });
+                let payload_attr = html_escape(&payload.to_string());
+
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">${}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">
+                            <div class="flex gap-2">
+                                <button type="button" data-modal-target="invoice" data-modal-mode="edit" data-modal-action="/admin/invoices/{}/update" data-modal-title="Update Invoice Status" data-modal-payload="{}" class="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">Edit</button>
+                                <form method="post" class="inline" action="/admin/invoices/{}/delete" onsubmit="return confirm('Delete this invoice?');">
+                                    <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors">Delete</button>
+                                </form>
+                            </div>
+                        </td>
                     </tr>"#,
                     html_escape(&inv.invoice_number),
                     html_escape(&inv.customer_name),
                     inv.created_at.format("%Y-%m-%d"),
                     inv.total_amount,
-                    inv.status
+                    inv.status,
+                    inv.id,
+                    payload_attr,
+                    inv.id
                 )
             })
             .collect::<Vec<_>>()
@@ -2925,25 +4032,95 @@ fn render_invoices_content(invoices: &[Invoice]) -> String {
     };
 
     format!(
-        r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
-            <table class="w-full">
-                <thead class="bg-gray-50 dark:bg-slate-800/50">
+        "{header}<div class=\"bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border\">
+            <table class=\"w-full\">
+                <thead class=\"bg-gray-50 dark:bg-slate-800/50\">
                     <tr>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Invoice #</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Customer</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Date</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Amount</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Invoice #</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Customer</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Date</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Amount</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Status</th>
+                        <th class=\"px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider\">Actions</th>
                     </tr>
                 </thead>
-                <tbody>{}</tbody>
+                <tbody>{rows}</tbody>
             </table>
-        </div>"#,
-        rows
+        </div>{template}",
+        header = header,
+        rows = rows,
+        template = render_invoice_modal_template(orders, stores)
     )
 }
 
-fn render_credit_slips_content(slips: &[CreditSlip]) -> String {
+fn render_invoice_modal_template(orders: &[Order], stores: &[Store]) -> String {
+    let order_options = orders
+        .iter()
+        .map(|ord| {
+            format!(
+                r#"<option value="{}">{} - {} (${:.2})</option>"#,
+                ord.id,
+                html_escape(&ord.customer_name),
+                ord.created_at.format("%Y-%m-%d"),
+                ord.total_amount
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let store_options = stores
+        .iter()
+        .map(|store| {
+            format!(
+                r#"<option value="{}">{}</option>"#,
+                store.id,
+                html_escape(&store.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<template id="modal-invoice-template">
+        <form method="post" class="space-y-4">
+            <div data-create-only class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Order
+                    <select name="order_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select order</option>
+                        {order_options}
+                    </select>
+                </label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Store
+                    <select name="store_id" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select store</option>
+                        {store_options}
+                    </select>
+                </label>
+            </div>
+            <div data-edit-only class="hidden">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Status
+                    <select name="status" required class="mt-1 block w-full rounded-lg border border-gray-200 dark:border-dark-border bg-white dark:bg-slate-900 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="draft">Draft</option>
+                        <option value="sent">Sent</option>
+                        <option value="paid">Paid</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </label>
+            </div>
+            <div class="text-right">
+                <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">Save</button>
+            </div>
+        </form>
+    </template>"#,
+        order_options = order_options,
+        store_options = store_options
+    )
+}
+
+fn render_credit_slips_content(slips: &[CreditSlip], _orders: &[Order]) -> String {
     let rows = if slips.is_empty() {
         r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="4" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No credit slips yet.</td></tr>"#.to_string()
     } else {
@@ -2953,9 +4130,9 @@ fn render_credit_slips_content(slips: &[CreditSlip]) -> String {
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">${}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                     </tr>"#,
                     html_escape(&slip.slip_number),
                     slip.created_at.format("%Y-%m-%d"),
@@ -2985,7 +4162,7 @@ fn render_credit_slips_content(slips: &[CreditSlip]) -> String {
     )
 }
 
-fn render_delivery_slips_content(slips: &[DeliverySlip]) -> String {
+fn render_delivery_slips_content(slips: &[DeliverySlip], _orders: &[Order]) -> String {
     let rows = if slips.is_empty() {
         r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No delivery slips yet.</td></tr>"#.to_string()
     } else {
@@ -2995,10 +4172,10 @@ fn render_delivery_slips_content(slips: &[DeliverySlip]) -> String {
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                     </tr>"#,
                     html_escape(&slip.slip_number),
                     slip.tracking_number.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
@@ -3039,11 +4216,11 @@ fn render_shopping_carts_content(carts: &[ShoppingCart]) -> String {
             .map(|cart| {
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">${}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                     </tr>"#,
                     cart.id,
                     cart.customer_email.as_deref().map(html_escape).unwrap_or_else(|| "Guest".to_string()),
@@ -3075,7 +4252,7 @@ fn render_shopping_carts_content(carts: &[ShoppingCart]) -> String {
     )
 }
 
-fn render_gift_cards_content(cards: &[GiftCard]) -> String {
+fn render_gift_cards_content(cards: &[GiftCard], _stores: &[Store]) -> String {
     let rows = if cards.is_empty() {
         r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50"><td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No gift cards yet.</td></tr>"#.to_string()
     } else {
@@ -3085,10 +4262,10 @@ fn render_gift_cards_content(cards: &[GiftCard]) -> String {
                 format!(
                     r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50">
                         <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{}</td>
-                        <td class="px-4 py-3">{}</td>
-                        <td class="px-4 py-3">${}</td>
-                        <td class="px-4 py-3">${}</td>
-                        <td class="px-4 py-3">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">${}</td>
+                        <td class="px-4 py-3 text-gray-900 dark:text-white">{}</td>
                     </tr>"#,
                     html_escape(&card.code),
                     card.recipient_email.as_deref().map(html_escape).unwrap_or_else(|| "—".to_string()),
@@ -3158,4 +4335,27 @@ fn parse_key_value_lines(input: Option<String>) -> Vec<(String, String)> {
             }
         })
         .collect()
+}
+
+// ===== Customer Service Render Functions =====
+
+fn render_chat_content(_messages: &[ChatMessage], _customers: &[Customer]) -> String {
+    r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-6 border border-gray-200 dark:border-dark-border">
+        <h2 class="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Customer Service Chat</h2>
+        <p class="text-gray-600 dark:text-gray-400">Live chat interface - Coming soon</p>
+    </div>"#.to_string()
+}
+
+fn render_order_messages_content(_messages: &[OrderMessage], _orders: &[Order]) -> String {
+    r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-6 border border-gray-200 dark:border-dark-border">
+        <h2 class="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Order Messages</h2>
+        <p class="text-gray-600 dark:text-gray-400">Customer questions about orders - Coming soon</p>
+    </div>"#.to_string()
+}
+
+fn render_merchandise_returns_content(_returns: &[MerchandiseReturn], _orders: &[Order]) -> String {
+    r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-6 border border-gray-200 dark:border-dark-border">
+        <h2 class="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Merchandise Returns</h2>
+        <p class="text-gray-600 dark:text-gray-400">Product returns management - Coming soon</p>
+    </div>"#.to_string()
 }
