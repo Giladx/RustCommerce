@@ -399,6 +399,87 @@ pub async fn get_order_route(
     Ok(Json(order))
 }
 
+#[derive(Deserialize)]
+pub struct CreateOrderRequest {
+    pub store_id: Uuid,
+    pub customer_email: String,
+    pub customer_name: String,
+    pub customer_phone: Option<String>,
+    pub total_amount: f64,
+    pub notes: Option<String>,
+    pub billing_address: Option<serde_json::Value>,
+    pub shipping_address: Option<serde_json::Value>,
+}
+
+pub async fn create_order_route(
+    State(pool): State<PgPool>,
+    Json(payload): Json<CreateOrderRequest>,
+) -> Result<Json<Order>, (StatusCode, String)> {
+    let total = rust_decimal::Decimal::from_f64(payload.total_amount)
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid total amount".to_string()))?;
+    
+    let order = checkout_repository::create_order(
+        &pool,
+        payload.store_id,
+        payload.customer_email,
+        payload.customer_name,
+        total,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))?;
+    
+    Ok(Json(order))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateOrderRequest {
+    pub customer_email: Option<String>,
+    pub customer_name: Option<String>,
+    pub customer_phone: Option<String>,
+    pub status: Option<String>,
+    pub payment_status: Option<String>,
+    pub notes: Option<String>,
+    pub billing_address: Option<serde_json::Value>,
+    pub shipping_address: Option<serde_json::Value>,
+}
+
+pub async fn update_order_route(
+    State(pool): State<PgPool>,
+    Path(order_id): Path<Uuid>,
+    Json(payload): Json<UpdateOrderRequest>,
+) -> Result<Json<Order>, AppError> {
+    let order = checkout_repository::update_order(
+        &pool,
+        order_id,
+        payload.customer_email,
+        payload.customer_name,
+        payload.customer_phone,
+        payload.status,
+        payload.payment_status,
+        payload.notes,
+        payload.billing_address,
+        payload.shipping_address,
+    )
+    .await?;
+    
+    Ok(Json(order))
+}
+
+pub async fn delete_order_route(
+    State(pool): State<PgPool>,
+    Path(order_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let deleted = checkout_repository::delete_order(&pool, order_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))?;
+    
+    if deleted {
+        Ok(Json(serde_json::json!({ "success": true, "message": "Order deleted successfully" })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Order not found".to_string()))
+    }
+}
+
 // ===== Order Status Routes =====
 
 pub async fn list_order_statuses_route(

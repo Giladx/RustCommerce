@@ -306,6 +306,62 @@ pub async fn update_order_status(
     .await
 }
 
+pub async fn update_order(
+    pool: &PgPool,
+    order_id: Uuid,
+    customer_email: Option<String>,
+    customer_name: Option<String>,
+    customer_phone: Option<String>,
+    status: Option<String>,
+    payment_status: Option<String>,
+    notes: Option<String>,
+    billing_address: Option<serde_json::Value>,
+    shipping_address: Option<serde_json::Value>,
+) -> Result<Order, sqlx::Error> {
+    let current_order = get_order(pool, order_id).await?;
+    
+    sqlx::query_as!(
+        Order,
+        r#"
+        UPDATE orders 
+        SET 
+            customer_email = COALESCE($2, customer_email),
+            customer_name = COALESCE($3, customer_name),
+            customer_phone = COALESCE($4, customer_phone),
+            status = COALESCE($5, status),
+            payment_status = COALESCE($6, payment_status),
+            notes = COALESCE($7, notes),
+            billing_address = COALESCE($8, billing_address),
+            shipping_address = COALESCE($9, shipping_address),
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        "#,
+        order_id,
+        customer_email.or(Some(current_order.customer_email)),
+        customer_name.or(Some(current_order.customer_name)),
+        customer_phone.or_else(|| current_order.customer_phone.clone()),
+        status.or(Some(current_order.status)),
+        payment_status.or(Some(current_order.payment_status)),
+        notes,
+        billing_address,
+        shipping_address
+    )
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn delete_order(pool: &PgPool, order_id: Uuid) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        "DELETE FROM orders WHERE id = $1",
+        order_id
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected() > 0)
+}
+
 // Invoices
 pub async fn create_invoice(
     pool: &PgPool,

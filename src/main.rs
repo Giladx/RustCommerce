@@ -70,7 +70,10 @@ async fn main() {
         .route("/checkout", post(api::routes::checkout_route))
         // Orders
         .route("/orders", get(api::routes::list_orders_route))
+        .route("/orders", post(api::routes::create_order_route))
         .route("/orders/:id", get(api::routes::get_order_route))
+        .route("/orders/:id", put(api::routes::update_order_route))
+        .route("/orders/:id", delete(api::routes::delete_order_route))
         // Order Status Management
         .route("/order-statuses", get(api::routes::list_order_statuses_route))
         .route("/order-statuses/:id", get(api::routes::get_order_status_route))

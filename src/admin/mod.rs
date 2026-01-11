@@ -2277,6 +2277,29 @@ fn render_api_docs() -> String {
   "customer_name": "String",
   "total_amount": "Float"
 }"#),
+        ("GET", "/api/orders", "List all orders", "None"),
+        ("POST", "/api/orders", "Create a new order", r#"{
+  "store_id": "UUID",
+  "customer_email": "String",
+  "customer_name": "String",
+  "customer_phone": "String (optional)",
+  "total_amount": "Float",
+  "notes": "String (optional)",
+  "billing_address": "JSON (optional)",
+  "shipping_address": "JSON (optional)"
+}"#),
+        ("GET", "/api/orders/{id}", "Get order by ID", "None"),
+        ("PUT", "/api/orders/{id}", "Update an order", r#"{
+  "customer_email": "String (optional)",
+  "customer_name": "String (optional)",
+  "customer_phone": "String (optional)",
+  "status": "String (optional)",
+  "payment_status": "String (optional)",
+  "notes": "String (optional)",
+  "billing_address": "JSON (optional)",
+  "shipping_address": "JSON (optional)"
+}"#),
+        ("DELETE", "/api/orders/{id}", "Delete an order", "None"),
         ("GET", "/api/invoices", "List all invoices", "None"),
         ("POST", "/api/invoices", "Create an invoice", r#"{
   "order_id": "UUID",
