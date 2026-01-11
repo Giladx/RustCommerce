@@ -3398,7 +3398,14 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
     let store_lookup: HashMap<Uuid, &Store> = stores.iter().map(|s| (s.id, s)).collect();
     let category_lookup: HashMap<Uuid, &Category> = categories.iter().map(|c| (c.id, c)).collect();
     
-    let header = r#"<div class="mb-6">
+    // Build category filter options
+    let category_filter_options = categories
+        .iter()
+        .map(|cat| format!(r#"<option value="{}">{}</option>"#, cat.id, html_escape(&cat.name)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    
+    let header = format!(r#"<div class="mb-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-xl font-bold text-gray-900 dark:text-white">Product Catalog</h2>
@@ -3436,6 +3443,7 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                         <select id="categoryFilter" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                             <option value="">All Categories</option>
                             <option value="uncategorized">Uncategorized</option>
+                            {category_options}
                         </select>
                     </div>
                     
@@ -3458,7 +3466,7 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                         </select>
                     </div>
                     
-                    <button type="button" class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
+                    <button type="button" id="clearFilters" class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors">
                         Clear Filters
                     </button>
                 </div>
@@ -3486,7 +3494,9 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                     </div>
                 </div>
             </div>
-        </div>"#;
+        </div>"#,
+        category_options = category_filter_options
+    );
 
     let rows = if products.is_empty() {
         r#"<tr class="border-b border-gray-200 dark:border-dark-border"><td colspan="11" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
@@ -3563,8 +3573,25 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                 });
                 let payload_attr = html_escape(&payload.to_string());
                 
+                // Stock status class for filtering
+                let stock_status = if stock == 0 {
+                    "out-of-stock"
+                } else if stock < 20 {
+                    "low-stock"
+                } else {
+                    "in-stock"
+                };
+                
+                let active_status = if product.is_active { "active" } else { "inactive" };
+                let category_id_str = product.category_id.map(|id| id.to_string()).unwrap_or_else(|| "uncategorized".to_string());
+                
                 format!(
-                    r#"<tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group">
+                    r#"<tr class="product-row border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group" 
+                        data-title="{}" 
+                        data-sku="{}" 
+                        data-category="{}" 
+                        data-status="{}" 
+                        data-stock="{}">
                         <td class="px-3 py-2">
                             <input type="checkbox" class="product-checkbox w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" data-id="{}">
                         </td>
@@ -3609,6 +3636,11 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                             </div>
                         </td>
                     </tr>"#,
+                    html_escape(&product.title.to_lowercase()),
+                    sku.to_lowercase(),
+                    category_id_str,
+                    active_status,
+                    stock_status,
                     product.id,
                     html_escape(&product.title),
                     sku,
@@ -3726,6 +3758,63 @@ fn render_products_content(stores: &[Store], categories: &[Category], products: 
                 bar.classList.add('hidden');
             }}
         }}
+        </script>
+        
+        <script>
+        // Product Filtering
+        function filterProducts() {{
+            const searchTerm = document.getElementById('productSearch').value.toLowerCase();
+            const categoryFilter = document.getElementById('categoryFilter').value;
+            const statusFilter = document.getElementById('statusFilter').value;
+            const stockFilter = document.getElementById('stockFilter').value;
+            
+            const rows = document.querySelectorAll('.product-row');
+            let visibleCount = 0;
+            
+            rows.forEach(row => {{
+                const title = row.dataset.title || '';
+                const sku = row.dataset.sku || '';
+                const category = row.dataset.category || '';
+                const status = row.dataset.status || '';
+                const stock = row.dataset.stock || '';
+                
+                // Check all filters
+                const matchesSearch = !searchTerm || title.includes(searchTerm) || sku.includes(searchTerm);
+                const matchesCategory = !categoryFilter || category === categoryFilter;
+                const matchesStatus = !statusFilter || status === statusFilter;
+                const matchesStock = !stockFilter || stock === stockFilter;
+                
+                const isVisible = matchesSearch && matchesCategory && matchesStatus && matchesStock;
+                
+                if (isVisible) {{
+                    row.style.display = '';
+                    visibleCount++;
+                }} else {{
+                    row.style.display = 'none';
+                }}
+            }});
+            
+            // Update count display
+            const countDisplay = document.querySelector('.text-sm.text-gray-600.dark\\:text-gray-400 .font-medium');
+            if (countDisplay) {{
+                countDisplay.textContent = visibleCount;
+            }}
+        }}
+        
+        // Attach filter listeners
+        document.getElementById('productSearch')?.addEventListener('input', filterProducts);
+        document.getElementById('categoryFilter')?.addEventListener('change', filterProducts);
+        document.getElementById('statusFilter')?.addEventListener('change', filterProducts);
+        document.getElementById('stockFilter')?.addEventListener('change', filterProducts);
+        
+        // Clear filters
+        document.getElementById('clearFilters')?.addEventListener('click', function() {{
+            document.getElementById('productSearch').value = '';
+            document.getElementById('categoryFilter').value = '';
+            document.getElementById('statusFilter').value = '';
+            document.getElementById('stockFilter').value = '';
+            filterProducts();
+        }});
         </script>
         
         <!-- Product Modal Container -->
