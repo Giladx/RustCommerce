@@ -33,6 +33,7 @@ use crate::{
         },
         customer::Customer,
         customer_service::{ChatMessage, MerchandiseReturn, OrderMessage},
+        discount::{Coupon, DbDiscountRule},
         product::{Product, ProductAttribute, ProductFeature},
         store::store::Store,
     },
@@ -252,6 +253,11 @@ pub fn router() -> Router {
         .route("/admin/brands", get(brands_page).post(create_brand))
         .route("/admin/brands/:id/update", post(update_brand))
         .route("/admin/brands/:id/delete", post(delete_brand))
+        // Discounts & Coupons
+        .route("/admin/discounts", get(discounts_page))
+        .route("/admin/coupons", get(coupons_page).post(create_coupon))
+        .route("/admin/coupons/:id/update", post(update_coupon))
+        .route("/admin/coupons/:id/delete", post(delete_coupon))
         // Orders
         .route("/admin/orders", get(orders_page).post(create_order))
         .route("/admin/orders/:id/status", post(update_order_status))
@@ -505,14 +511,51 @@ async fn products_page(Extension(pool): Extension<PgPool>) -> Html<String> {
 async fn brands_page(Extension(pool): Extension<PgPool>) -> Html<String> {
     let brands = sqlx::query_as::<_, Brand>("SELECT * FROM brands ORDER BY name")
         .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
+        .await.unwrap_or_default();
     Html(render_page(
         AdminNav::Catalog,
         "Brands",
         "Manage product brands",
         &render_brands_content(&brands),
     ))
+}
+
+async fn discounts_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let rules = sqlx::query_as::<_, DbDiscountRule>("SELECT * FROM discount_rules ORDER BY priority, name")
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+    Html(render_page(
+        AdminNav::Catalog,
+        "Discount Rules",
+        "Catalog & cart price rules",
+        &render_discounts_content(&rules),
+    ))
+}
+
+async fn coupons_page(Extension(pool): Extension<PgPool>) -> Html<String> {
+    let coupons = sqlx::query_as::<_, Coupon>("SELECT * FROM coupons ORDER BY created_at DESC")
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+    Html(render_page(
+        AdminNav::Catalog,
+        "Coupons & Vouchers",
+        "Manage discount codes",
+        &render_coupons_content(&coupons),
+    ))
+}
+
+async fn create_coupon() -> Redirect {
+    Redirect::to("/admin/coupons")
+}
+
+async fn update_coupon() -> Redirect {
+    Redirect::to("/admin/coupons")
+}
+
+async fn delete_coupon() -> Redirect {
+    Redirect::to("/admin/coupons")
 }
 
 async fn catalog_page() -> Redirect {
@@ -6350,7 +6393,14 @@ fn render_gift_cards_content(cards: &[GiftCard], _stores: &[Store]) -> String {
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Code</label>
-                        <input type="text" name="code" id="cardCode" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="GIFT-XXXXX" />
+                        <div class="flex gap-2">
+                            <input type="text" name="code" id="cardCode" required class="flex-1 px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono" placeholder="GIFT-XXXXX" />
+                            <button type="button" onclick="generateGiftCardCode()" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors flex items-center gap-2">
+                                <span class="material-icons text-sm">autorenew</span>
+                                Generate
+                            </button>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Auto-generate a unique voucher code</p>
                     </div>
                     
                     <div class="grid grid-cols-2 gap-4">
@@ -6427,6 +6477,25 @@ fn render_gift_cards_content(cards: &[GiftCard], _stores: &[Store]) -> String {
                 modal.classList.remove('hidden');
             }});
         }});
+        
+        // Generate gift card / voucher code
+        function generateGiftCardCode() {{
+            const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No ambiguous chars (I,O,0,1)
+            const segments = 4;
+            const segmentLength = 4;
+            const parts = [];
+            
+            for (let i = 0; i < segments; i++) {{
+                let segment = '';
+                for (let j = 0; j < segmentLength; j++) {{
+                    segment += charset.charAt(Math.floor(Math.random() * charset.length));
+                }}
+                parts.push(segment);
+            }}
+            
+            const code = 'GIFT-' + parts.join('-');
+            document.getElementById('cardCode').value = code;
+        }}
         </script>"#,
         header = header,
         rows = rows,
@@ -6494,5 +6563,352 @@ fn render_merchandise_returns_content(_returns: &[MerchandiseReturn], _orders: &
     r#"<div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm p-6 border border-gray-200 dark:border-dark-border">
         <h2 class="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Merchandise Returns</h2>
         <p class="text-gray-600 dark:text-gray-400">Product returns management - Coming soon</p>
+    </div>"#.to_string()
+}
+
+fn render_coupons_content(coupons: &[Coupon]) -> String {
+    let header = format!(r#"
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Coupons & Vouchers</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Create and manage discount codes</p>
+            </div>
+            <button type="button" data-modal-target="couponModal" data-modal-mode="create" data-modal-action="/admin/coupons" data-modal-title="New Coupon" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+                <span class="material-icons text-lg">confirmation_number</span>
+                New Coupon
+            </button>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Active Coupons</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{active}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-green-600 dark:text-green-400">check_circle</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Total Coupons</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{total}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-blue-600 dark:text-blue-400">confirmation_number</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Used Today</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">0</p>
+                    </div>
+                    <div class="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-between">
+                        <span class="material-icons text-purple-600 dark:text-purple-400">trending_up</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Savings Generated</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">$0</p>
+                    </div>
+                    <div class="w-12 h-12 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-yellow-600 dark:text-yellow-400">savings</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    "#, 
+        active = coupons.iter().filter(|c| c.is_active).count(),
+        total = coupons.len()
+    );
+
+    let rows = if coupons.is_empty() {
+        r#"<tr><td colspan="9" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No coupons created yet.</td></tr>"#.to_string()
+    } else {
+        coupons.iter().map(|coupon| {
+            let status_badge = if coupon.is_active {
+                r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Active</span>"#
+            } else {
+                r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Inactive</span>"#
+            };
+
+            let type_label = match coupon.discount_type.as_str() {
+                "percentage" => format!("{}% Off", coupon.discount_value),
+                "fixed_cart" => format!("${} Off Cart", coupon.discount_value),
+                "fixed_product" => format!("${} Off Product", coupon.discount_value),
+                _ => "Unknown".to_string()
+            };
+
+            let usage_text = if let Some(limit) = coupon.usage_limit_per_coupon {
+                format!("{} / {}", coupon.current_usage_count, limit)
+            } else {
+                format!("{} / ∞", coupon.current_usage_count)
+            };
+
+            format!(r#"
+                <tr class="border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group">
+                    <td class="px-4 py-3">
+                        <div class="font-mono font-semibold text-sm text-blue-600 dark:text-blue-400">{}</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">{}</div>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{}</td>
+                    <td class="px-4 py-3">{}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{}</td>
+                    <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{}</td>
+                    <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{}</td>
+                    <td class="px-4 py-3">
+                        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Edit">
+                                <span class="material-icons text-lg">edit</span>
+                            </button>
+                            <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors" title="Copy Code">
+                                <span class="material-icons text-lg">content_copy</span>
+                            </button>
+                            <form method="post" action="/admin/coupons/{}/delete" style="display:inline;" onsubmit="return confirm('Delete this coupon?');">
+                                <button type="submit" class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                    <span class="material-icons text-lg">delete</span>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            "#,
+                html_escape(&coupon.code),
+                coupon.description.as_deref().unwrap_or("—"),
+                type_label,
+                status_badge,
+                usage_text,
+                coupon.start_date.map(|d| d.format("%b %d").to_string()).unwrap_or_else(|| "—".to_string()),
+                coupon.end_date.map(|d| d.format("%b %d").to_string()).unwrap_or_else(|| "—".to_string()),
+                coupon.id
+            )
+        }).collect::<Vec<_>>().join("\n")
+    };
+
+    format!(r#"{header}
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <table class="w-full">
+                <thead class="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-dark-border">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Code</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Type</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Usage</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Start</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">End</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>
+        {modal}
+    "#,
+        header = header,
+        rows = rows,
+        modal = render_coupon_modal()
+    )
+}
+
+fn render_coupon_modal() -> String {
+    r#"
+    <!-- Coupon Modal -->
+    <div id="couponModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-dark-panel rounded-lg max-w-4xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex justify-between items-center sticky top-0 bg-white dark:bg-dark-panel z-10">
+                <h3 id="couponModalTitle" class="text-lg font-semibold text-gray-900 dark:text-white">New Coupon</h3>
+                <button onclick="document.getElementById('couponModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <span class="material-icons">close</span>
+                </button>
+            </div>
+            
+            <!-- Tabs -->
+            <div class="border-b border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-slate-800/50">
+                <nav class="flex gap-8 px-6" role="tablist">
+                    <button type="button" class="coupon-tab-btn py-4 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" data-tab="general">
+                        General
+                    </button>
+                    <button type="button" class="coupon-tab-btn py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400" data-tab="conditions">
+                        Conditions
+                    </button>
+                    <button type="button" class="coupon-tab-btn py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400" data-tab="actions">
+                        Actions & Limits
+                    </button>
+                </nav>
+            </div>
+            
+            <form id="couponForm" method="POST" class="px-6 py-6">
+                <input type="hidden" name="id" id="couponId" />
+                
+                <!-- General Tab -->
+                <div class="coupon-tab-content space-y-4" data-tab="general">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Coupon Code</label>
+                        <div class="flex gap-2">
+                            <input type="text" name="code" id="couponCode" required class="flex-1 px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase" placeholder="SUMMER25" />
+                            <button type="button" onclick="generateCouponCode()" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors flex items-center gap-2">
+                                <span class="material-icons text-sm">autorenew</span>
+                                Generate
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                        <textarea name="description" id="couponDescription" rows="2" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Internal description..."></textarea>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Type</label>
+                            <select name="discount_type" id="couponDiscountType" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="percentage">Percentage Discount</option>
+                                <option value="fixed_cart">Fixed Cart Discount</option>
+                                <option value="fixed_product">Fixed Product Discount</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Value</label>
+                            <input type="number" name="discount_value" id="couponDiscountValue" step="0.01" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="10" />
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" name="is_active" id="couponIsActive" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked />
+                        <label for="couponIsActive" class="text-sm text-gray-700 dark:text-gray-300">Active</label>
+                    </div>
+                </div>
+                
+                <!-- Conditions Tab -->
+                <div class="coupon-tab-content space-y-4 hidden" data-tab="conditions">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Minimum Purchase</label>
+                            <input type="number" name="min_purchase_amount" id="couponMinPurchase" step="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0.00" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Maximum Discount</label>
+                            <input type="number" name="max_discount_amount" id="couponMaxDiscount" step="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Date</label>
+                            <input type="datetime-local" name="start_date" id="couponStartDate" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">End Date</label>
+                            <input type="datetime-local" name="end_date" id="couponEndDate" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="exclude_sale_items" id="couponExcludeSale" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                            <label for="couponExcludeSale" class="text-sm text-gray-700 dark:text-gray-300">Exclude sale items</label>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="individual_use" id="couponIndividual" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                            <label for="couponIndividual" class="text-sm text-gray-700 dark:text-gray-300">Individual use only (cannot combine with other coupons)</label>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="free_shipping" id="couponFreeShipping" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                            <label for="couponFreeShipping" class="text-sm text-gray-700 dark:text-gray-300">Allow free shipping</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Actions & Limits Tab -->
+                <div class="coupon-tab-content space-y-4 hidden" data-tab="actions">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usage Limit per Coupon</label>
+                            <input type="number" name="usage_limit_per_coupon" id="couponUsageLimit" min="0" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                            <p class="mt-1 text-xs text-gray-500">Leave empty for unlimited</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usage Limit per Customer</label>
+                            <input type="number" name="usage_limit_per_customer" id="couponCustomerLimit" min="0" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                            <p class="mt-1 text-xs text-gray-500">How many times each customer can use</p>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed Email Addresses</label>
+                        <textarea name="allowed_emails" id="couponAllowedEmails" rows="2" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="user@example.com, another@example.com (comma-separated)"></textarea>
+                        <p class="mt-1 text-xs text-gray-500">Leave empty to allow everyone</p>
+                    </div>
+                </div>
+                
+                <div class="flex justify-end gap-3 pt-6 border-t border-gray-200 dark:border-dark-border mt-6">
+                    <button type="button" onclick="document.getElementById('couponModal').classList.add('hidden')" class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                        Save Coupon
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+    // Tab switching
+    document.querySelectorAll('.coupon-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.dataset.tab;
+            
+            // Update buttons
+            document.querySelectorAll('.coupon-tab-btn').forEach(b => {
+                b.classList.remove('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+                b.classList.add('border-transparent', 'text-gray-500');
+            });
+            btn.classList.remove('border-transparent', 'text-gray-500');
+            btn.classList.add('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+            
+            // Update content
+            document.querySelectorAll('.coupon-tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.querySelector(`.coupon-tab-content[data-tab="${targetTab}"]`).classList.remove('hidden');
+        });
+    });
+    
+    // Generate coupon code
+    function generateCouponCode() {
+        const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const length = 8;
+        let code = '';
+        for (let i = 0; i < length; i++) {
+            code += charset.charAt(Math.floor(Math.random() * charset.length));
+        }
+        document.getElementById('couponCode').value = code;
+    }
+    </script>
+    "#.to_string()
+}
+
+fn render_discounts_content(_rules: &[DbDiscountRule]) -> String {
+    r#"<div class="text-center py-12">
+        <span class="material-icons text-6xl text-gray-400 dark:text-gray-600">discount</span>
+        <h3 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">Discount Rules</h3>
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Advanced catalog and cart price rules coming soon...</p>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Use Coupons for immediate discount management</p>
     </div>"#.to_string()
 }
