@@ -3333,6 +3333,8 @@ fn render_navigation(active: AdminNav, current_path: &str) -> String {
         ("category", "Categories", "/admin/categories"),
         ("inventory_2", "Products", "/admin/products"),
         ("sell", "Brands", "/admin/brands"),
+        ("local_offer", "Discounts", "/admin/discounts"),
+        ("confirmation_number", "Coupons", "/admin/coupons"),
         ("list_alt", "Attributes", "/admin/product-attributes"),
         ("label", "Features", "/admin/product-features"),
     ];
@@ -6904,11 +6906,462 @@ fn render_coupon_modal() -> String {
     "#.to_string()
 }
 
-fn render_discounts_content(_rules: &[DbDiscountRule]) -> String {
-    r#"<div class="text-center py-12">
-        <span class="material-icons text-6xl text-gray-400 dark:text-gray-600">discount</span>
-        <h3 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">Discount Rules</h3>
-        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Advanced catalog and cart price rules coming soon...</p>
-        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Use Coupons for immediate discount management</p>
-    </div>"#.to_string()
+fn render_discounts_content(rules: &[DbDiscountRule]) -> String {
+    let header = format!(r#"
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Discount Rules</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Catalog price rules, cart rules, and automatic discounts</p>
+            </div>
+            <button type="button" data-modal-target="discountRuleModal" data-modal-mode="create" data-modal-action="/admin/discounts" data-modal-title="New Discount Rule" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+                <span class="material-icons text-lg">local_offer</span>
+                New Rule
+            </button>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Active Rules</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{active}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-green-600 dark:text-green-400">check_circle</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Cart Rules</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{cart_rules}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-blue-600 dark:text-blue-400">shopping_cart</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Catalog Rules</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{catalog_rules}</p>
+                    </div>
+                    <div class="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-purple-600 dark:text-purple-400">inventory_2</span>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm border border-gray-200 dark:border-dark-border p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Total Savings</p>
+                        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">$0</p>
+                    </div>
+                    <div class="w-12 h-12 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center">
+                        <span class="material-icons text-yellow-600 dark:text-yellow-400">savings</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    "#,
+        active = rules.iter().filter(|r| r.is_active).count(),
+        cart_rules = rules.iter().filter(|r| r.rule_type == "cart").count(),
+        catalog_rules = rules.iter().filter(|r| r.rule_type == "catalog").count()
+    );
+
+    let rows = if rules.is_empty() {
+        r#"<tr><td colspan="10" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+            <div class="flex flex-col items-center gap-4">
+                <span class="material-icons text-6xl text-gray-300 dark:text-gray-700">local_offer</span>
+                <div>
+                    <p class="font-semibold text-gray-900 dark:text-white">No discount rules yet</p>
+                    <p class="text-sm mt-1">Create your first automatic discount or cart rule</p>
+                </div>
+            </div>
+        </td></tr>"#.to_string()
+    } else {
+        rules.iter().enumerate().map(|(idx, rule)| {
+            let status_badge = if rule.is_active {
+                r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Active</span>"#
+            } else {
+                r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Inactive</span>"#
+            };
+
+            let rule_type_badge = match rule.rule_type.as_str() {
+                "cart" => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Cart Rule</span>"#,
+                "catalog" => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">Catalog</span>"#,
+                _ => r#"<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">Other</span>"#
+            };
+
+            let discount_display = match rule.discount_type.as_str() {
+                "percentage" => format!("{}% Off", rule.discount_value),
+                "fixed_amount" => format!("${} Off", rule.discount_value),
+                "buy_x_get_y" => "Buy X Get Y".to_string(),
+                "free_shipping" => "Free Shipping".to_string(),
+                _ => "Custom".to_string()
+            };
+
+            // Mock usage count
+            let usage = (idx * 7) % 50;
+            let limit_text = if let Some(limit) = rule.total_usage_limit {
+                format!("{} / {}", usage, limit)
+            } else {
+                format!("{} / ∞", usage)
+            };
+
+            format!(r#"
+                <tr class="discount-row border-b border-gray-200 dark:border-dark-border hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group">
+                    <td class="px-4 py-3">
+                        <input type="checkbox" class="discount-checkbox rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                    </td>
+                    <td class="px-4 py-3">
+                        <div class="font-semibold text-sm text-gray-900 dark:text-white">{name}</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">{description}</div>
+                    </td>
+                    <td class="px-4 py-3">{rule_type}</td>
+                    <td class="px-4 py-3 font-medium text-gray-900 dark:text-white text-sm">{discount}</td>
+                    <td class="px-4 py-3">{status}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">#{priority}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{usage}</td>
+                    <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{start}</td>
+                    <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{end}</td>
+                    <td class="px-4 py-3">
+                        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Edit">
+                                <span class="material-icons text-lg">edit</span>
+                            </button>
+                            <button class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors" title="Duplicate">
+                                <span class="material-icons text-lg">content_copy</span>
+                            </button>
+                            <form method="post" action="/admin/discounts/{id}/delete" style="display:inline;" onsubmit="return confirm('Delete this discount rule?');">
+                                <button type="submit" class="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                    <span class="material-icons text-lg">delete</span>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            "#,
+                name = html_escape(&rule.name),
+                description = rule.description.as_deref().unwrap_or("—"),
+                rule_type = rule_type_badge,
+                discount = discount_display,
+                status = status_badge,
+                priority = rule.priority,
+                usage = limit_text,
+                start = rule.start_date.map(|d| d.format("%b %d").to_string()).unwrap_or_else(|| "—".to_string()),
+                end = rule.end_date.map(|d| d.format("%b %d").to_string()).unwrap_or_else(|| "—".to_string()),
+                id = rule.id
+            )
+        }).collect::<Vec<_>>().join("\n")
+    };
+
+    format!(r#"{header}
+        <div class="bg-white dark:bg-dark-panel rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-dark-border">
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-200 dark:border-dark-border">
+                        <tr>
+                            <th class="px-4 py-3 text-left w-12">
+                                <input type="checkbox" id="selectAllRules" class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-slate-900">
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Rule Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Type</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Discount</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Priority</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Usage</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Start</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">End</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+        </div>
+        
+        {modal}
+    "#,
+        header = header,
+        rows = rows,
+        modal = render_discount_rule_modal()
+    )
+}
+
+fn render_discount_rule_modal() -> String {
+    r#"
+    <!-- Discount Rule Modal -->
+    <div id="discountRuleModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-dark-panel rounded-lg max-w-5xl w-full shadow-xl max-h-[90vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex justify-between items-center sticky top-0 bg-white dark:bg-dark-panel z-10">
+                <h3 id="discountRuleModalTitle" class="text-lg font-semibold text-gray-900 dark:text-white">New Discount Rule</h3>
+                <button onclick="document.getElementById('discountRuleModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <span class="material-icons">close</span>
+                </button>
+            </div>
+            
+            <!-- Tabs -->
+            <div class="border-b border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-slate-800/50">
+                <nav class="flex gap-8 px-6" role="tablist">
+                    <button type="button" class="rule-tab-btn py-4 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" data-tab="general">
+                        General
+                    </button>
+                    <button type="button" class="rule-tab-btn py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400" data-tab="conditions">
+                        Conditions
+                    </button>
+                    <button type="button" class="rule-tab-btn py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400" data-tab="actions">
+                        Actions
+                    </button>
+                </nav>
+            </div>
+            
+            <form id="discountRuleForm" method="POST" class="px-6 py-6">
+                <input type="hidden" name="id" id="ruleId" />
+                
+                <!-- General Tab -->
+                <div class="rule-tab-content space-y-4" data-tab="general">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rule Name</label>
+                        <input type="text" name="name" id="ruleName" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Summer Sale 25% Off" />
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                        <textarea name="description" id="ruleDescription" rows="2" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Internal description..."></textarea>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rule Type</label>
+                            <select name="rule_type" id="ruleType" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="cart">Cart Price Rule (applies at checkout)</option>
+                                <option value="catalog">Catalog Price Rule (automatic)</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">Cart rules require customer action, catalog rules are automatic</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Type</label>
+                            <select name="discount_type" id="ruleDiscountType" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="percentage">Percentage Discount (%)</option>
+                                <option value="fixed_amount">Fixed Amount ($)</option>
+                                <option value="buy_x_get_y">Buy X Get Y</option>
+                                <option value="free_shipping">Free Shipping</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Value</label>
+                            <input type="number" name="discount_value" id="ruleDiscountValue" step="0.01" required class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="25" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Priority</label>
+                            <input type="number" name="priority" id="rulePriority" value="0" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                            <p class="mt-1 text-xs text-gray-500">Lower numbers = higher priority (0 = highest)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="is_active" id="ruleIsActive" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked />
+                            <label for="ruleIsActive" class="text-sm text-gray-700 dark:text-gray-300">Active</label>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="stop_rules_processing" id="ruleStopProcessing" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                            <label for="ruleStopProcessing" class="text-sm text-gray-700 dark:text-gray-300">Stop further rules processing</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Conditions Tab -->
+                <div class="rule-tab-content space-y-6 hidden" data-tab="conditions">
+                    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                        <div class="flex items-start gap-3">
+                            <span class="material-icons text-blue-600 dark:text-blue-400 mt-0.5">info</span>
+                            <div>
+                                <p class="text-sm font-medium text-blue-900 dark:text-blue-100">Condition Logic</p>
+                                <p class="text-xs text-blue-700 dark:text-blue-300 mt-1">All conditions must be met (AND logic). Leave empty to apply to all orders.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Minimum Subtotal</label>
+                            <input type="number" name="min_subtotal" step="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0.00" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Maximum Subtotal</label>
+                            <input type="number" name="max_subtotal" step="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Minimum Quantity</label>
+                            <input type="number" name="min_quantity" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Maximum Quantity</label>
+                            <input type="number" name="max_quantity" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Date</label>
+                            <input type="datetime-local" name="start_date" id="ruleStartDate" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">End Date</label>
+                            <input type="datetime-local" name="end_date" id="ruleEndDate" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Customer Groups</label>
+                        <input type="text" name="customer_groups" placeholder="general, wholesale, vip (comma-separated)" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                        <p class="mt-1 text-xs text-gray-500">Leave empty to apply to all customer groups</p>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="first_order_only" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                            <label class="text-sm text-gray-700 dark:text-gray-300">First order only</label>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="exclude_sale_items" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                            <label class="text-sm text-gray-700 dark:text-gray-300">Exclude sale items</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Actions Tab -->
+                <div class="rule-tab-content space-y-6 hidden" data-tab="actions">
+                    <div class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+                        <div class="flex items-start gap-3">
+                            <span class="material-icons text-purple-600 dark:text-purple-400 mt-0.5">auto_awesome</span>
+                            <div>
+                                <p class="text-sm font-medium text-purple-900 dark:text-purple-100">Advanced Actions</p>
+                                <p class="text-xs text-purple-700 dark:text-purple-300 mt-1">Configure what happens when conditions are met</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="buyXGetYSection" class="hidden space-y-4">
+                        <h4 class="font-medium text-gray-900 dark:text-white">Buy X Get Y Configuration</h4>
+                        <div class="grid grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Buy Quantity (X)</label>
+                                <input type="number" name="buy_quantity" min="1" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="2" />
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Get Quantity (Y)</label>
+                                <input type="number" name="get_quantity" min="1" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="1" />
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount on Y (%)</label>
+                                <input type="number" name="get_discount_percentage" min="0" max="100" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="100" />
+                                <p class="mt-1 text-xs text-gray-500">100% = free, 50% = half price</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Apply To</label>
+                        <select name="apply_to" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="cart">Entire Cart</option>
+                            <option value="product">Specific Products</option>
+                            <option value="category">Specific Categories</option>
+                            <option value="cheapest">Cheapest Item</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Maximum Discount Amount</label>
+                        <input type="number" name="max_discount_amount" step="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                        <p class="mt-1 text-xs text-gray-500">Cap the maximum discount (useful for percentage discounts)</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usage Limit per Customer</label>
+                            <input type="number" name="uses_per_customer" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Total Usage Limit</label>
+                            <input type="number" name="total_usage_limit" class="w-full px-3 py-2 border border-gray-300 dark:border-dark-border rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Unlimited" />
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex justify-end gap-3 pt-6 border-t border-gray-200 dark:border-dark-border mt-6">
+                    <button type="button" onclick="document.getElementById('discountRuleModal').classList.add('hidden')" class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                        Save Discount Rule
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+    // Tab switching
+    document.querySelectorAll('.rule-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.dataset.tab;
+            
+            // Update buttons
+            document.querySelectorAll('.rule-tab-btn').forEach(b => {
+                b.classList.remove('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+                b.classList.add('border-transparent', 'text-gray-500');
+            });
+            btn.classList.remove('border-transparent', 'text-gray-500');
+            btn.classList.add('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+            
+            // Update content
+            document.querySelectorAll('.rule-tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.querySelector(`.rule-tab-content[data-tab="${targetTab}"]`).classList.remove('hidden');
+        });
+    });
+    
+    // Show/hide Buy X Get Y section
+    const discountTypeSelect = document.getElementById('ruleDiscountType');
+    if (discountTypeSelect) {
+        discountTypeSelect.addEventListener('change', () => {
+            const buyXGetYSection = document.getElementById('buyXGetYSection');
+            if (discountTypeSelect.value === 'buy_x_get_y') {
+                buyXGetYSection.classList.remove('hidden');
+            } else {
+                buyXGetYSection.classList.add('hidden');
+            }
+        });
+    }
+    
+    // Bulk selection
+    document.getElementById('selectAllRules').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.discount-checkbox');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+    </script>
+    "#.to_string()
 }
