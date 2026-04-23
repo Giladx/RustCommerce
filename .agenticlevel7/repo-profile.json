@@ -1,0 +1,28 @@
+{
+  "targetPath": "/home/gilad/RustCommerce",
+  "analyzedAt": "2026-03-21T07:22:04.595Z",
+  "repoKind": "git",
+  "languages": [
+    "Rust"
+  ],
+  "frameworks": [
+    "Rust Binary"
+  ],
+  "packageManagers": [
+    "cargo"
+  ],
+  "monorepoSignals": [],
+  "manifests": [
+    "Cargo.toml"
+  ],
+  "lockfiles": [
+    "Cargo.lock"
+  ],
+  "configFiles": [],
+  "ciFiles": [],
+  "packageJsonScripts": [],
+  "notes": [
+    "Detected 1 manifest/config signal(s).",
+    "Detected 1 lockfile(s)."
+  ]
+}

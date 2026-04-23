@@ -5,6 +5,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Store {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub name: String,
     pub domain: Option<String>,
     pub currency: String,

@@ -25,7 +25,7 @@ pub async fn insert_category(pool: &PgPool, category: &Category) -> Result<(), s
 pub async fn list_categories(pool: &PgPool) -> Result<Vec<Category>, sqlx::Error> {
     sqlx::query_as::<_, Category>(
         r#"
-        SELECT id, store_id, name, slug, description, is_active, created_at
+        SELECT id, numeric_id, store_id, name, slug, description, is_active, created_at
         FROM categories
         ORDER BY created_at DESC
         "#,

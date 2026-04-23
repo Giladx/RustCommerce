@@ -5,6 +5,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ShoppingCart {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub store_id: Uuid,
     pub customer_id: Option<Uuid>,
     pub customer_email: Option<String>,
@@ -26,6 +27,7 @@ pub struct ShoppingCart {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CartItem {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub cart_id: Uuid,
     pub product_id: Uuid,
     pub quantity: i32,
@@ -39,6 +41,7 @@ pub struct CartItem {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Order {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub order_number: String,
     pub store_id: Uuid,
     pub cart_id: Option<Uuid>,
@@ -68,6 +71,7 @@ pub struct Order {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderItem {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub order_id: Uuid,
     pub product_id: Option<Uuid>,
     pub product_title: String,
@@ -83,6 +87,7 @@ pub struct OrderItem {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderStatus {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -98,6 +103,7 @@ pub struct OrderStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderStatusTransition {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub from_status_id: Uuid,
     pub to_status_id: Uuid,
     pub requires_confirmation: Option<bool>,
@@ -108,6 +114,7 @@ pub struct OrderStatusTransition {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OrderStatusHistory {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub order_id: Uuid,
     pub from_status: Option<String>,
     pub to_status: String,
@@ -120,6 +127,7 @@ pub struct OrderStatusHistory {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Invoice {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub invoice_number: String,
     pub order_id: Uuid,
     pub store_id: Uuid,
@@ -143,6 +151,7 @@ pub struct Invoice {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct DeliverySlip {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub slip_number: String,
     pub order_id: Uuid,
     pub store_id: Uuid,
@@ -160,6 +169,7 @@ pub struct DeliverySlip {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CreditSlip {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub slip_number: String,
     pub order_id: Uuid,
     pub store_id: Uuid,
@@ -176,6 +186,7 @@ pub struct CreditSlip {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct GiftCard {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub code: String,
     pub store_id: Uuid,
     pub initial_amount: rust_decimal::Decimal,

@@ -1,0 +1,10 @@
+[
+  {
+    "entrypoint": "src/main.rs",
+    "confidence": "low",
+    "reason": "No downstream local import chain was found from src/main.rs.",
+    "steps": [
+      "src/main.rs"
+    ]
+  }
+]

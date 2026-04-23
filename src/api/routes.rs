@@ -58,6 +58,7 @@ pub async fn create_product(
     let slug = slugify(&req.title);
     let product = Product {
         id: Uuid::new_v4(),
+        numeric_id: 0,
         store_id: req.store_id,
         category_id: req.category_id,
         brand_id: None,
@@ -206,6 +207,7 @@ pub async fn create_store(
 ) -> Result<Json<StoreResponse>, StatusCode> {
     let store = Store {
         id: Uuid::new_v4(),
+        numeric_id: 0,
         name: req.name,
         domain: req.domain,
         currency: req.currency,
@@ -654,6 +656,7 @@ pub async fn create_customer_route(
 ) -> Result<Json<Customer>, AppError> {
     let customer = Customer {
         id: Uuid::new_v4(),
+        numeric_id: 0,
         store_id: payload.store_id,
         email: payload.email,
         full_name: payload.full_name,
@@ -720,6 +723,7 @@ pub async fn create_category_route(
 ) -> Result<Json<Category>, AppError> {
     let category = Category {
         id: Uuid::new_v4(),
+        numeric_id: 0,
         store_id: payload.store_id,
         name: payload.name,
         slug: payload.slug,
@@ -1188,4 +1192,51 @@ pub async fn delete_gift_card_route(
         .execute(&pool)
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+
+// ===== OTP Routes =====
+
+use crate::api::otp_service::{send_otp, verify_otp, OtpConfig};
+use crate::domain::otp::{VerifyOtpRequest, OtpVerification};
+
+#[derive(Deserialize)]
+pub struct SendOtpRequestDto {
+    pub phone: String,
+    pub app_id: Option<i32>,
+}
+
+pub async fn send_otp_route(
+    State(pool): State<PgPool>,
+    Json(payload): Json<SendOtpRequestDto>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let config = OtpConfig::default();
+    
+    let verification = send_otp(&pool, &payload.phone, payload.app_id, &config)
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "OTP sent successfully",
+        "phone": verification.phone,
+        "valid_until": verification.valid_until,
+        "max_tries": verification.max_tries,
+    })))
+}
+
+pub async fn verify_otp_route(
+    State(pool): State<PgPool>,
+    Json(payload): Json<VerifyOtpRequest>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let verification = verify_otp(&pool, &payload)
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "verified": true,
+        "phone": verification.phone,
+        "verified_at": verification.verified_at,
+    })))
 }

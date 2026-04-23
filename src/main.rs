@@ -104,6 +104,9 @@ async fn main() {
         .route("/gift-cards/:id", get(api::routes::get_gift_card_route))
         .route("/gift-cards/:id", put(api::routes::update_gift_card_route))
         .route("/gift-cards/:id", delete(api::routes::delete_gift_card_route))
+        // OTP Authentication (019 SMS)
+        .route("/otp/send", post(api::routes::send_otp_route))
+        .route("/otp/verify", post(api::routes::verify_otp_route))
         // Cart Calculations
         .route("/cart/calculate", post(api::routes::calculate_cart))
         .route_layer(axum::middleware::from_fn(mw::auth::auth_middleware))
@@ -114,7 +117,7 @@ async fn main() {
         .merge(admin::router())
         .layer(Extension(pool));
 
-    let addr = "127.0.0.1:3000";
+    let addr = "127.0.0.1:3001";
     println!("🚀 RustCommerce running on http://{}", addr);
 
     let listener = match TcpListener::bind(addr).await {

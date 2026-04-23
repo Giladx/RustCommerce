@@ -5,6 +5,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Brand {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,

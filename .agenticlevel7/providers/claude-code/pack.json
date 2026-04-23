@@ -1,0 +1,32 @@
+{
+  "provider": "claude-code",
+  "startupBrief": "# Claude Code Startup Brief\n\n## Project: rust-cli\nFramework: Rust Binary, Rust, managed by cargo\nPurpose: e-commerce + admin/dashboard + user authentication + API backend + ML/AI\n\n## Approach: Staged Reasoning\nThis project has been decomposed into workstreams with dedicated agents.\nWork through them in order, planning before acting.\n\n## Agent Queue\n1. **Foundation (Configuration Agent)** (config)\n   Own project-wide configuration. Ensure environment variables, compiler settings, linter rules, and framework config are consistent and documented.\n   Files: Cargo.toml, .env, .gemini/settings.json (+1)\n3. **Gatekeeper (Authentication Agent)** (auth)\n   Secure the authentication and authorization surface. Verify login flows, session management, protected routes, and permission boundaries.\n   Files: src/admin/auth.rs, src/mw/auth.rs\n5. **Navigator (Routing & Endpoints Agent)** (routing)\n   Own the request routing surface of this rust-cli. Map all routes, verify layouts render correctly, and ensure the routing tree is complete and consist\n   Files: src/api/error.rs, src/domain/order/error.rs, src/api/routes\n6. **Lighthouse (SEO & Indexing Agent)** (seo-indexing)\n   Ensure this e-commerce + admin/dashboard + user authentication + API backend + ML/AI project is properly indexed by search engines. Verify sitemaps, r\n   Files: migrations/20260117_extend_product_catalog.sql\n7. **Launchpad (Build & Deploy Agent)** (build-deploy)\n   Own the build pipeline and deployment configuration. Verify builds succeed, assets are optimized, and deployment targets are correctly configured.\n   Files: src/infra/db/mod.rs, src/infra/db/pool.rs, src/infra/db/store.rs (+3)\n8. **Operator (Admin & Dashboard Agent)** (admin-dashboard)\n   Own the administrative interface. Ensure admin routes are protected, CRUD operations work correctly, and management workflows are complete.\n   Files: src/admin/auth.rs, src/admin/mod.rs, src/admin\n9. **Agent (File Storage Agent)** (storage)\n   Own the file storage workstream. Map all related files, verify correctness, and ensure this area is well-maintained.\n   Files: .sentry-native/attachments\n10. **Agent (Monitoring & Observability Agent)** (monitoring)\n   Own the monitoring & observability workstream. Map all related files, verify correctness, and ensure this area is well-maintained.\n   Files: .sentry-native, .sentry-native/attachments, .sentry-native/completed (+2)\n\n## Control Points\n- `src/main.rs` (entrypoint): Runtime entry point\n- `Cargo.toml` (framework-config): Rust crate manifest\n\n## Risks\n- Some likely entrypoints have shallow traced execution paths: src/main.rs.\n- Configuration files are operationally important here, especially package.json.\n- [warning] Safe command story is unclear: Without explicit lint/typecheck/test/build entrypoints, AI loops become slower and riskier.\n- [warning] Test and validation story is unclear: Lack of test structure reduces confidence in automated changes.\n- [warning] Repository surface area is harder to control than necessary: Large files, deep trees, or a wide root increase the chance of imprecise AI changes.\n\n## How To Start\n1. Read the project model and workstream files\n2. Pick the first agent in the queue\n3. Read its agent brief in `.agenticlevel7/agents/`\n4. Understand scope and dependencies before making changes\n5. Validate with the agent's recommended commands",
+  "taskQueue": [
+    "[1] Foundation (Configuration Agent): Own project-wide configuration. Ensure environment variables, compiler settings, linter rules, and framework config are ",
+    "[3] Gatekeeper (Authentication Agent): Secure the authentication and authorization surface. Verify login flows, session management, protected routes, and permi",
+    "[5] Navigator (Routing & Endpoints Agent): Own the request routing surface of this rust-cli. Map all routes, verify layouts render correctly, and ensure the routin",
+    "[6] Lighthouse (SEO & Indexing Agent): Ensure this e-commerce + admin/dashboard + user authentication + API backend + ML/AI project is properly indexed by sear",
+    "[7] Launchpad (Build & Deploy Agent): Own the build pipeline and deployment configuration. Verify builds succeed, assets are optimized, and deployment targets",
+    "[8] Operator (Admin & Dashboard Agent): Own the administrative interface. Ensure admin routes are protected, CRUD operations work correctly, and management work",
+    "[9] Agent (File Storage Agent): Own the file storage workstream. Map all related files, verify correctness, and ensure this area is well-maintained.",
+    "[10] Agent (Monitoring & Observability Agent): Own the monitoring & observability workstream. Map all related files, verify correctness, and ensure this area is well-m"
+  ],
+  "scopedFirstActions": [
+    "Read .agenticlevel7/project-model.json to understand the full project model",
+    "Read .agenticlevel7/workstreams.json to understand workstream decomposition",
+    "Read .agenticlevel7/agent-manifest.json to understand available agents",
+    "Inspect control point: src/main.rs (Runtime entry point)",
+    "Start with Foundation (Configuration Agent): read its agent file at .agenticlevel7/agents/config-agent.md",
+    "First file to read: Cargo.toml",
+    "Plan before acting - understand dependencies between workstreams before making changes"
+  ],
+  "constraints": [
+    "Plan each workstream before executing - read agent brief first",
+    "Respect workstream boundaries - do not cross into another agent's scope without reason",
+    "Use staged reasoning: understand -> plan -> act -> validate",
+    "High-risk workstreams require extra caution: Data Model, Authentication, API Layer, Routing & Endpoints",
+    "Known risks: Some likely entrypoints have shallow traced execution paths: src/main.rs."
+  ],
+  "suggestedLaunchCommand": "claude --print \"Read .agenticlevel7/providers/claude-code/startup-brief.md and begin working through the agent queue for this rust-cli project\"",
+  "contextPackReference": ".agenticlevel7/providers/claude-code/"
+}

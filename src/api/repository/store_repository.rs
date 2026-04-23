@@ -26,6 +26,7 @@ pub async fn list_stores(pool: &PgPool) -> Result<Vec<Store>, sqlx::Error> {
         r#"
         SELECT
             id,
+            numeric_id,
             name,
             domain,
             currency,

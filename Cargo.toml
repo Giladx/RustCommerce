@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tower-http = { version = "0.5", features = ["fs"] }
 urlencoding = "2"
 axum-extra = { version = "0.9", features = ["cookie"] }
+reqwest = { version = "0.13.1", features = ["json"] }
 
 [dependencies.sqlx]
 version = "0.7"

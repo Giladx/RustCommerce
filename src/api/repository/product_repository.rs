@@ -29,7 +29,7 @@ pub async fn insert_product(pool: &PgPool, product: &Product) -> Result<(), sqlx
 pub async fn list_products(pool: &PgPool) -> Result<Vec<Product>, sqlx::Error> {
     sqlx::query_as::<_, Product>(
         r#"
-        SELECT id, store_id, category_id, brand_id, title, slug, description, price, compare_price, cost_price, is_active, created_at
+        SELECT id, numeric_id, store_id, category_id, brand_id, title, slug, description, price, compare_price, cost_price, is_active, created_at
         FROM products
         ORDER BY created_at DESC
         "#,
@@ -41,7 +41,7 @@ pub async fn list_products(pool: &PgPool) -> Result<Vec<Product>, sqlx::Error> {
 pub async fn get_product_by_id(pool: &PgPool, id: Uuid) -> Result<Product, sqlx::Error> {
     sqlx::query_as::<_, Product>(
         r#"
-        SELECT id, store_id, category_id, brand_id, title, slug, description, price, compare_price, cost_price, is_active, created_at
+        SELECT id, numeric_id, store_id, category_id, brand_id, title, slug, description, price, compare_price, cost_price, is_active, created_at
         FROM products
         WHERE id = $1
         "#,

@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Product {
     pub id: Uuid,
+    pub numeric_id: i32,
     pub store_id: Uuid,
     pub category_id: Option<Uuid>,
     pub brand_id: Option<Uuid>,

@@ -1,0 +1,382 @@
+[
+  {
+    "filePath": "bin_test.rs",
+    "category": "test",
+    "summary": "rust test (13 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 13,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/admin/auth.rs",
+    "category": "script",
+    "summary": "rust script (122 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 122,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/dto.rs",
+    "category": "script",
+    "summary": "rust script (109 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 109,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/error.rs",
+    "category": "script",
+    "summary": "rust script (56 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 56,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/mod.rs",
+    "category": "script",
+    "summary": "rust script (6 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 6,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/otp_service.rs",
+    "category": "script",
+    "summary": "rust script (258 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::otp::"
+    ],
+    "exports": [],
+    "lineCount": 258,
+    "importanceScore": 3,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/category_repository.rs",
+    "category": "script",
+    "summary": "rust script (88 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::category::Category"
+    ],
+    "exports": [],
+    "lineCount": 88,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/checkout_repository.rs",
+    "category": "script",
+    "summary": "rust script (607 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::checkout::"
+    ],
+    "exports": [],
+    "lineCount": 607,
+    "importanceScore": 3,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/customer_repository.rs",
+    "category": "script",
+    "summary": "rust script (80 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::customer::Customer"
+    ],
+    "exports": [],
+    "lineCount": 80,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/customer_service_repository.rs",
+    "category": "script",
+    "summary": "rust script (152 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::customer_service::"
+    ],
+    "exports": [],
+    "lineCount": 152,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/mod.rs",
+    "category": "script",
+    "summary": "rust script (10 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 10,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/product_attribute_repository.rs",
+    "category": "script",
+    "summary": "rust script (90 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::product::ProductAttribute"
+    ],
+    "exports": [],
+    "lineCount": 90,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/product_feature_repository.rs",
+    "category": "script",
+    "summary": "rust script (83 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::product::ProductFeature"
+    ],
+    "exports": [],
+    "lineCount": 83,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/product_repository.rs",
+    "category": "script",
+    "summary": "rust script (94 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::product::Product"
+    ],
+    "exports": [],
+    "lineCount": 94,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/repository/store_repository.rs",
+    "category": "script",
+    "summary": "rust script (91 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::store::store::Store"
+    ],
+    "exports": [],
+    "lineCount": 91,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/api/routes.rs",
+    "category": "script",
+    "summary": "rust script (1243 lines, 15 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::api::dto::",
+      "crate::api::repository::",
+      "crate::domain::brand::Brand",
+      "crate::domain::customer::Customer",
+      "crate::domain::cart::",
+      "crate::domain::category::Category",
+      "crate::domain::checkout::",
+      "crate::domain::discount::discount::DiscountStacking",
+      "crate::domain::discount::",
+      "crate::domain::money::"
+    ],
+    "exports": [],
+    "lineCount": 1243,
+    "importanceScore": 3,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/api_token.rs",
+    "category": "script",
+    "summary": "rust script (17 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 17,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/brand.rs",
+    "category": "script",
+    "summary": "rust script (41 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 41,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/cart/cart.rs",
+    "category": "script",
+    "summary": "rust script (116 lines, 7 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::cart::item::CartItem",
+      "crate::domain::cart::totals::CartTotals",
+      "crate::domain::discount::apply::apply_discounts",
+      "crate::domain::discount::rule::DiscountRule",
+      "crate::domain::money::currency::Currency",
+      "crate::domain::money::money::Money",
+      "crate::domain::money::vat::"
+    ],
+    "exports": [],
+    "lineCount": 116,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/cart/item.rs",
+    "category": "script",
+    "summary": "rust script (19 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::money::money::Money"
+    ],
+    "exports": [],
+    "lineCount": 19,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/cart/mod.rs",
+    "category": "script",
+    "summary": "rust script (12 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "tests"
+    ],
+    "exports": [],
+    "lineCount": 12,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/cart/tests.rs",
+    "category": "test",
+    "summary": "rust test (21 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::money::"
+    ],
+    "exports": [],
+    "lineCount": 21,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/cart/totals.rs",
+    "category": "script",
+    "summary": "rust script (9 lines, 1 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::money::money::Money"
+    ],
+    "exports": [],
+    "lineCount": 9,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/category/category.rs",
+    "category": "script",
+    "summary": "rust script (17 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 17,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/category/mod.rs",
+    "category": "script",
+    "summary": "rust script (4 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 4,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/checkout/mod.rs",
+    "category": "script",
+    "summary": "rust script (204 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 204,
+    "importanceScore": 3,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/customer_service.rs",
+    "category": "script",
+    "summary": "rust script (36 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 36,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/customer.rs",
+    "category": "script",
+    "summary": "rust script (22 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 22,
+    "importanceScore": 1,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/discount/apply.rs",
+    "category": "script",
+    "summary": "rust script (55 lines, 4 imports)",
+    "importedBy": [],
+    "imports": [
+      "crate::domain::discount::discount::",
+      "crate::domain::discount::rule::DiscountRule",
+      "crate::domain::money::money::Money",
+      "crate::domain::money::rounding::round"
+    ],
+    "exports": [],
+    "lineCount": 55,
+    "importanceScore": 2,
+    "reasons": []
+  },
+  {
+    "filePath": "src/domain/discount/coupon.rs",
+    "category": "script",
+    "summary": "rust script (91 lines, 0 imports)",
+    "importedBy": [],
+    "imports": [],
+    "exports": [],
+    "lineCount": 91,
+    "importanceScore": 2,
+    "reasons": []
+  }
+]

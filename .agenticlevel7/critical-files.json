@@ -1,0 +1,122 @@
+[
+  {
+    "filePath": "src/main.rs",
+    "score": 5,
+    "category": "entrypoint",
+    "reasons": [
+      "entrypoint"
+    ]
+  },
+  {
+    "filePath": "package.json",
+    "score": 40,
+    "category": "manifest",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/main.rs",
+    "score": 39,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/routes.rs",
+    "score": 38,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "Cargo.toml",
+    "score": 37,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/admin/auth.rs",
+    "score": 36,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/admin/mod.rs",
+    "score": 35,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/dto.rs",
+    "score": 34,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/error.rs",
+    "score": 33,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/mod.rs",
+    "score": 32,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/otp_service.rs",
+    "score": 31,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/repository/category_repository.rs",
+    "score": 30,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/repository/checkout_repository.rs",
+    "score": 29,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/repository/customer_repository.rs",
+    "score": 28,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  },
+  {
+    "filePath": "src/api/repository/customer_service_repository.rs",
+    "score": 27,
+    "category": "entrypoint",
+    "reasons": [
+      "retained as a critical file because repo metadata still points to it"
+    ]
+  }
+]
